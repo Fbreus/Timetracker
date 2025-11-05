@@ -1,0 +1,130 @@
+{
+  "name": "vscode-time-tracker",
+  "displayName": "Time Tracker",
+  "description": "Automatic time tracking for VS Code projects with analytics dashboard",
+  "version": "1.0.0",
+  "publisher": "timetracker",
+  "engines": {
+    "vscode": "^1.70.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "timetracker.startTracking",
+        "title": "Time Tracker: Start Tracking"
+      },
+      {
+        "command": "timetracker.stopTracking",
+        "title": "Time Tracker: Stop Tracking"
+      },
+      {
+        "command": "timetracker.pauseTracking",
+        "title": "Time Tracker: Pause Tracking"
+      },
+      {
+        "command": "timetracker.resumeTracking",
+        "title": "Time Tracker: Resume Tracking"
+      },
+      {
+        "command": "timetracker.showDashboard",
+        "title": "Time Tracker: Show Dashboard"
+      },
+      {
+        "command": "timetracker.addManualEntry",
+        "title": "Time Tracker: Add Manual Entry"
+      },
+      {
+        "command": "timetracker.exportData",
+        "title": "Time Tracker: Export Data"
+      },
+      {
+        "command": "timetracker.openSettings",
+        "title": "Time Tracker: Open Settings"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "timetracker",
+          "title": "Time Tracker",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "timetracker": [
+        {
+          "id": "timetracker.sidebar",
+          "name": "Time Tracker"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Time Tracker",
+      "properties": {
+        "timetracker.idleTimeout": {
+          "type": "number",
+          "default": 5,
+          "description": "Minutes of inactivity before pausing tracking"
+        },
+        "timetracker.minSessionDuration": {
+          "type": "number",
+          "default": 1,
+          "description": "Minimum session duration in minutes to record"
+        },
+        "timetracker.excludedProjects": {
+          "type": "array",
+          "default": [],
+          "description": "Project paths or names to exclude from tracking"
+        },
+        "timetracker.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start tracking when opening a project"
+        },
+        "timetracker.workingHoursStart": {
+          "type": "string",
+          "default": "09:00",
+          "description": "Working hours start time (HH:MM)"
+        },
+        "timetracker.workingHoursEnd": {
+          "type": "string",
+          "default": "17:00",
+          "description": "Working hours end time (HH:MM)"
+        },
+        "timetracker.dataRetentionDays": {
+          "type": "number",
+          "default": 365,
+          "description": "Number of days to retain data (0 = forever)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTest.js",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "@types/vscode": "^1.70.0",
+    "@typescript-eslint/eslint-plugin": "^5.30.0",
+    "@typescript-eslint/parser": "^5.30.0",
+    "eslint": "^8.18.0",
+    "typescript": "^4.7.4"
+  },
+  "dependencies": {
+    "better-sqlite3": "^8.5.0",
+    "chart.js": "^4.3.0"
+  }
+}

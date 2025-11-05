@@ -1,0 +1,10 @@
+out
+node_modules
+.vscode-test/
+*.vsix
+*.db
+*.db-journal
+.DS_Store
+dashboard/node_modules
+dashboard/dist
+dashboard/build
