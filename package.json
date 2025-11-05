@@ -4,6 +4,15 @@
   "description": "Automatic time tracking for VS Code projects with analytics dashboard",
   "version": "1.0.0",
   "publisher": "timetracker",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Fbreus/Timetracker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Fbreus/Timetracker/issues"
+  },
+  "homepage": "https://github.com/Fbreus/Timetracker#readme",
   "engines": {
     "vscode": "^1.70.0"
   },
@@ -116,6 +125,7 @@
     "lint": "eslint src --ext ts"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^18.0.0",
     "@types/vscode": "^1.70.0",
     "@typescript-eslint/eslint-plugin": "^5.30.0",
@@ -124,7 +134,7 @@
     "typescript": "^4.7.4"
   },
   "dependencies": {
-    "better-sqlite3": "^8.5.0",
+    "better-sqlite3": "^11.5.0",
     "chart.js": "^4.3.0"
   }
 }
