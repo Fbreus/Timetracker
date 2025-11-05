@@ -6,4 +6,5 @@ tsconfig.json
 **/*.map
 **/*.ts
 node_modules/**
+!node_modules/better-sqlite3/**
 *.vsix
