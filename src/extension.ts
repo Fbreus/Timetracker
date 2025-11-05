@@ -11,13 +11,14 @@ let timeTracker: TimeTracker;
 let sidebarProvider: SidebarProvider;
 let exporter: DataExporter;
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
     console.log('Time Tracker extension is activating...');
 
     try {
         // Initialize database
         console.log('Initializing database...');
         db = new TimeTrackerDatabase(context.globalStorageUri.fsPath);
+        await db.initialize();
         console.log('Database initialized successfully');
 
         // Get configuration

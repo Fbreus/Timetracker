@@ -1,6 +1,6 @@
 import * as path from 'path';
 import * as fs from 'fs';
-import Database from 'better-sqlite3';
+import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 
 export interface Project {
     id?: number;
@@ -110,80 +110,116 @@ CREATE INDEX IF NOT EXISTS idx_activity_log_entry ON activity_log(time_entry_id)
 `;
 
 export class TimeTrackerDatabase {
-    private db: Database.Database;
+    private db: SqlJsDatabase | null = null;
     private dbPath: string;
+    private initialized: boolean = false;
 
     constructor(storagePath: string) {
+        this.dbPath = path.join(storagePath, 'timetracker.db');
+
         // Ensure the storage directory exists
         if (!fs.existsSync(storagePath)) {
             fs.mkdirSync(storagePath, { recursive: true });
         }
-
-        this.dbPath = path.join(storagePath, 'timetracker.db');
-        this.db = new Database(this.dbPath);
-        this.initialize();
     }
 
-    private initialize(): void {
-        // Execute schema statements
-        this.db.exec(DATABASE_SCHEMA);
+    async initialize(): Promise<void> {
+        if (this.initialized) {
+            return;
+        }
+
+        const SQL = await initSqlJs();
+
+        // Try to load existing database
+        if (fs.existsSync(this.dbPath)) {
+            const buffer = fs.readFileSync(this.dbPath);
+            this.db = new SQL.Database(new Uint8Array(buffer));
+        } else {
+            this.db = new SQL.Database();
+        }
+
+        // Execute schema
+        this.db.run(DATABASE_SCHEMA);
 
         // Enable foreign keys
-        this.db.pragma('foreign_keys = ON');
+        this.db.run('PRAGMA foreign_keys = ON');
+
+        this.initialized = true;
+        this.saveToFile();
+    }
+
+    private saveToFile(): void {
+        if (!this.db) {
+            return;
+        }
+
+        const data = this.db.export();
+        fs.writeFileSync(this.dbPath, data);
     }
 
     // Project operations
     createProject(project: Project): number {
-        const stmt = this.db.prepare(`
-            INSERT INTO projects (name, path, category, tags)
-            VALUES (?, ?, ?, ?)
-        `);
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
 
-        const info = stmt.run(
-            project.name,
-            project.path,
-            project.category || null,
-            project.tags ? JSON.stringify(project.tags) : null
+        this.db.run(
+            'INSERT INTO projects (name, path, category, tags) VALUES (?, ?, ?, ?)',
+            [project.name, project.path, project.category || null, project.tags ? JSON.stringify(project.tags) : null]
         );
 
-        return info.lastInsertRowid as number;
+        const result = this.db.exec('SELECT last_insert_rowid() as id');
+        this.saveToFile();
+        return result[0].values[0][0] as number;
     }
 
     getProjectByPath(projectPath: string): Project | undefined {
-        const stmt = this.db.prepare('SELECT * FROM projects WHERE path = ?');
-        const row = stmt.get(projectPath) as any;
-
-        if (row && row.tags) {
-            row.tags = JSON.parse(row.tags);
+        if (!this.db) {
+            throw new Error('Database not initialized');
         }
 
-        return row;
+        const result = this.db.exec('SELECT * FROM projects WHERE path = ?', [projectPath]);
+
+        if (result.length === 0 || result[0].values.length === 0) {
+            return undefined;
+        }
+
+        return this.rowToProject(result[0].columns, result[0].values[0]);
     }
 
     getProjectById(id: number): Project | undefined {
-        const stmt = this.db.prepare('SELECT * FROM projects WHERE id = ?');
-        const row = stmt.get(id) as any;
-
-        if (row && row.tags) {
-            row.tags = JSON.parse(row.tags);
+        if (!this.db) {
+            throw new Error('Database not initialized');
         }
 
-        return row;
+        const result = this.db.exec('SELECT * FROM projects WHERE id = ?', [id]);
+
+        if (result.length === 0 || result[0].values.length === 0) {
+            return undefined;
+        }
+
+        return this.rowToProject(result[0].columns, result[0].values[0]);
     }
 
     getAllProjects(): Project[] {
-        const stmt = this.db.prepare('SELECT * FROM projects ORDER BY updated_at DESC');
-        const rows = stmt.all() as any[];
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
 
-        return rows.map(row => {
-            if (row.tags) {
-                row.tags = JSON.parse(row.tags);
-            }
-            return row;
-        });
+        const result = this.db.exec('SELECT * FROM projects ORDER BY updated_at DESC');
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToProject(result[0].columns, row));
     }
 
     updateProject(id: number, updates: Partial<Project>): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
         const fields: string[] = [];
         const values: any[] = [];
 
@@ -204,53 +240,83 @@ export class TimeTrackerDatabase {
             fields.push('updated_at = CURRENT_TIMESTAMP');
             values.push(id);
 
-            const stmt = this.db.prepare(`
-                UPDATE projects SET ${fields.join(', ')} WHERE id = ?
-            `);
-            stmt.run(...values);
+            this.db.run(
+                `UPDATE projects SET ${fields.join(', ')} WHERE id = ?`,
+                values
+            );
+            this.saveToFile();
         }
     }
 
     deleteProject(id: number): void {
-        const stmt = this.db.prepare('DELETE FROM projects WHERE id = ?');
-        stmt.run(id);
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run('DELETE FROM projects WHERE id = ?', [id]);
+        this.saveToFile();
     }
 
     // Time entry operations
     createTimeEntry(entry: TimeEntry): number {
-        const stmt = this.db.prepare(`
-            INSERT INTO time_entries (project_id, start_time, end_time, duration, is_manual, notes, is_billable)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        `);
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
 
-        const info = stmt.run(
-            entry.project_id,
-            entry.start_time,
-            entry.end_time || null,
-            entry.duration || null,
-            entry.is_manual ? 1 : 0,
-            entry.notes || null,
-            entry.is_billable ? 1 : 0
+        this.db.run(
+            'INSERT INTO time_entries (project_id, start_time, end_time, duration, is_manual, notes, is_billable) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [
+                entry.project_id,
+                entry.start_time,
+                entry.end_time || null,
+                entry.duration || null,
+                entry.is_manual ? 1 : 0,
+                entry.notes || null,
+                entry.is_billable ? 1 : 0
+            ]
         );
 
-        return info.lastInsertRowid as number;
+        const result = this.db.exec('SELECT last_insert_rowid() as id');
+        this.saveToFile();
+        return result[0].values[0][0] as number;
     }
 
     getTimeEntry(id: number): TimeEntry | undefined {
-        const stmt = this.db.prepare('SELECT * FROM time_entries WHERE id = ?');
-        return stmt.get(id) as TimeEntry;
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec('SELECT * FROM time_entries WHERE id = ?', [id]);
+
+        if (result.length === 0 || result[0].values.length === 0) {
+            return undefined;
+        }
+
+        return this.rowToTimeEntry(result[0].columns, result[0].values[0]);
     }
 
     getActiveTimeEntry(projectId: number): TimeEntry | undefined {
-        const stmt = this.db.prepare(`
-            SELECT * FROM time_entries
-            WHERE project_id = ? AND end_time IS NULL
-            ORDER BY start_time DESC LIMIT 1
-        `);
-        return stmt.get(projectId) as TimeEntry;
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT * FROM time_entries WHERE project_id = ? AND end_time IS NULL ORDER BY start_time DESC LIMIT 1',
+            [projectId]
+        );
+
+        if (result.length === 0 || result[0].values.length === 0) {
+            return undefined;
+        }
+
+        return this.rowToTimeEntry(result[0].columns, result[0].values[0]);
     }
 
     getTimeEntriesForProject(projectId: number, startDate?: string, endDate?: string): TimeEntry[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
         let query = 'SELECT * FROM time_entries WHERE project_id = ?';
         const params: any[] = [projectId];
 
@@ -266,11 +332,20 @@ export class TimeTrackerDatabase {
 
         query += ' ORDER BY start_time DESC';
 
-        const stmt = this.db.prepare(query);
-        return stmt.all(...params) as TimeEntry[];
+        const result = this.db.exec(query, params);
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToTimeEntry(result[0].columns, row));
     }
 
     getAllTimeEntries(startDate?: string, endDate?: string): TimeEntry[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
         let query = 'SELECT * FROM time_entries WHERE 1=1';
         const params: any[] = [];
 
@@ -286,11 +361,20 @@ export class TimeTrackerDatabase {
 
         query += ' ORDER BY start_time DESC';
 
-        const stmt = this.db.prepare(query);
-        return stmt.all(...params) as TimeEntry[];
+        const result = this.db.exec(query, params);
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToTimeEntry(result[0].columns, row));
     }
 
     updateTimeEntry(id: number, updates: Partial<TimeEntry>): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
         const fields: string[] = [];
         const values: any[] = [];
 
@@ -315,143 +399,274 @@ export class TimeTrackerDatabase {
             fields.push('updated_at = CURRENT_TIMESTAMP');
             values.push(id);
 
-            const stmt = this.db.prepare(`
-                UPDATE time_entries SET ${fields.join(', ')} WHERE id = ?
-            `);
-            stmt.run(...values);
+            this.db.run(
+                `UPDATE time_entries SET ${fields.join(', ')} WHERE id = ?`,
+                values
+            );
+            this.saveToFile();
         }
     }
 
     deleteTimeEntry(id: number): void {
-        const stmt = this.db.prepare('DELETE FROM time_entries WHERE id = ?');
-        stmt.run(id);
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run('DELETE FROM time_entries WHERE id = ?', [id]);
+        this.saveToFile();
     }
 
     // Activity log operations
     createActivityLog(log: ActivityLog): number {
-        const stmt = this.db.prepare(`
-            INSERT INTO activity_log (time_entry_id, activity_type, timestamp, metadata)
-            VALUES (?, ?, ?, ?)
-        `);
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
 
-        const info = stmt.run(
-            log.time_entry_id,
-            log.activity_type,
-            log.timestamp,
-            log.metadata || null
+        this.db.run(
+            'INSERT INTO activity_log (time_entry_id, activity_type, timestamp, metadata) VALUES (?, ?, ?, ?)',
+            [log.time_entry_id, log.activity_type, log.timestamp, log.metadata || null]
         );
 
-        return info.lastInsertRowid as number;
+        const result = this.db.exec('SELECT last_insert_rowid() as id');
+        this.saveToFile();
+        return result[0].values[0][0] as number;
     }
 
     getActivityLogsForEntry(timeEntryId: number): ActivityLog[] {
-        const stmt = this.db.prepare(`
-            SELECT * FROM activity_log
-            WHERE time_entry_id = ?
-            ORDER BY timestamp ASC
-        `);
-        return stmt.all(timeEntryId) as ActivityLog[];
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT * FROM activity_log WHERE time_entry_id = ? ORDER BY timestamp ASC',
+            [timeEntryId]
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToActivityLog(result[0].columns, row));
     }
 
     // Daily summary operations
     upsertDailySummary(summary: DailySummary): void {
-        const stmt = this.db.prepare(`
-            INSERT INTO daily_summaries (project_id, date, total_duration, session_count)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(project_id, date) DO UPDATE SET
-                total_duration = total_duration + excluded.total_duration,
-                session_count = session_count + excluded.session_count,
-                updated_at = CURRENT_TIMESTAMP
-        `);
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
 
-        stmt.run(summary.project_id, summary.date, summary.total_duration, summary.session_count);
+        this.db.run(
+            `INSERT INTO daily_summaries (project_id, date, total_duration, session_count)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(project_id, date) DO UPDATE SET
+                 total_duration = total_duration + excluded.total_duration,
+                 session_count = session_count + excluded.session_count,
+                 updated_at = CURRENT_TIMESTAMP`,
+            [summary.project_id, summary.date, summary.total_duration, summary.session_count]
+        );
+        this.saveToFile();
     }
 
     getDailySummary(projectId: number, date: string): DailySummary | undefined {
-        const stmt = this.db.prepare(`
-            SELECT * FROM daily_summaries
-            WHERE project_id = ? AND date = ?
-        `);
-        return stmt.get(projectId, date) as DailySummary;
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT * FROM daily_summaries WHERE project_id = ? AND date = ?',
+            [projectId, date]
+        );
+
+        if (result.length === 0 || result[0].values.length === 0) {
+            return undefined;
+        }
+
+        return this.rowToDailySummary(result[0].columns, result[0].values[0]);
     }
 
-    getDailySummariesForRange(startDate: string, endDate: string): DailySummary[] {
-        const stmt = this.db.prepare(`
-            SELECT ds.*, p.name as project_name, p.path as project_path
-            FROM daily_summaries ds
-            JOIN projects p ON ds.project_id = p.id
-            WHERE ds.date >= ? AND ds.date <= ?
-            ORDER BY ds.date DESC, p.name ASC
-        `);
-        return stmt.all(startDate, endDate) as any[];
+    getDailySummariesForRange(startDate: string, endDate: string): any[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            `SELECT ds.*, p.name as project_name, p.path as project_path
+             FROM daily_summaries ds
+             JOIN projects p ON ds.project_id = p.id
+             WHERE ds.date >= ? AND ds.date <= ?
+             ORDER BY ds.date DESC, p.name ASC`,
+            [startDate, endDate]
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => {
+            const obj: any = {};
+            result[0].columns.forEach((col, i) => {
+                obj[col] = row[i];
+            });
+            return obj;
+        });
     }
 
     // Analytics queries
     getTotalTimeForProject(projectId: number): number {
-        const stmt = this.db.prepare(`
-            SELECT COALESCE(SUM(duration), 0) as total
-            FROM time_entries
-            WHERE project_id = ? AND duration IS NOT NULL
-        `);
-        const result = stmt.get(projectId) as any;
-        return result.total;
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT COALESCE(SUM(duration), 0) as total FROM time_entries WHERE project_id = ? AND duration IS NOT NULL',
+            [projectId]
+        );
+
+        return (result[0]?.values[0]?.[0] as number) || 0;
     }
 
     getTotalTimeForAllProjects(): Array<{project_id: number, project_name: string, total_duration: number}> {
-        const stmt = this.db.prepare(`
-            SELECT p.id as project_id, p.name as project_name,
-                   COALESCE(SUM(te.duration), 0) as total_duration
-            FROM projects p
-            LEFT JOIN time_entries te ON p.id = te.project_id
-            GROUP BY p.id, p.name
-            ORDER BY total_duration DESC
-        `);
-        return stmt.all() as any[];
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            `SELECT p.id as project_id, p.name as project_name,
+                    COALESCE(SUM(te.duration), 0) as total_duration
+             FROM projects p
+             LEFT JOIN time_entries te ON p.id = te.project_id
+             GROUP BY p.id, p.name
+             ORDER BY total_duration DESC`
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => ({
+            project_id: row[0] as number,
+            project_name: row[1] as string,
+            total_duration: row[2] as number
+        }));
     }
 
     getTimeEntriesForDateRange(startDate: string, endDate: string): TimeEntry[] {
-        const stmt = this.db.prepare(`
-            SELECT * FROM time_entries
-            WHERE start_time >= ? AND start_time <= ?
-            ORDER BY start_time DESC
-        `);
-        return stmt.all(startDate, endDate) as TimeEntry[];
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT * FROM time_entries WHERE start_time >= ? AND start_time <= ? ORDER BY start_time DESC',
+            [startDate, endDate]
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToTimeEntry(result[0].columns, row));
     }
 
     // Settings operations
     setSetting(key: string, value: string): void {
-        const stmt = this.db.prepare(`
-            INSERT INTO settings (key, value) VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
-        `);
-        stmt.run(key, value);
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run(
+            `INSERT INTO settings (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP`,
+            [key, value]
+        );
+        this.saveToFile();
     }
 
     getSetting(key: string): string | undefined {
-        const stmt = this.db.prepare('SELECT value FROM settings WHERE key = ?');
-        const result = stmt.get(key) as any;
-        return result?.value;
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec('SELECT value FROM settings WHERE key = ?', [key]);
+
+        if (result.length === 0 || result[0].values.length === 0) {
+            return undefined;
+        }
+
+        return result[0].values[0][0] as string;
     }
 
     // Data cleanup
     cleanupOldData(retentionDays: number): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
         if (retentionDays > 0) {
             const cutoffDate = new Date();
             cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
             const cutoffStr = cutoffDate.toISOString();
 
-            const stmt = this.db.prepare('DELETE FROM time_entries WHERE start_time < ?');
-            stmt.run(cutoffStr);
+            this.db.run('DELETE FROM time_entries WHERE start_time < ?', [cutoffStr]);
+            this.saveToFile();
         }
     }
 
     // Close database connection
     close(): void {
-        this.db.close();
+        if (this.db) {
+            this.saveToFile();
+            this.db.close();
+            this.db = null;
+            this.initialized = false;
+        }
     }
 
     // Get database path
     getDbPath(): string {
         return this.dbPath;
+    }
+
+    // Helper methods to convert rows to objects
+    private rowToProject(columns: string[], row: any[]): Project {
+        const obj: any = {};
+        columns.forEach((col, i) => {
+            obj[col] = row[i];
+        });
+
+        if (obj.tags) {
+            obj.tags = JSON.parse(obj.tags);
+        }
+
+        return obj as Project;
+    }
+
+    private rowToTimeEntry(columns: string[], row: any[]): TimeEntry {
+        const obj: any = {};
+        columns.forEach((col, i) => {
+            obj[col] = row[i];
+        });
+
+        obj.is_manual = Boolean(obj.is_manual);
+        obj.is_billable = Boolean(obj.is_billable);
+
+        return obj as TimeEntry;
+    }
+
+    private rowToActivityLog(columns: string[], row: any[]): ActivityLog {
+        const obj: any = {};
+        columns.forEach((col, i) => {
+            obj[col] = row[i];
+        });
+
+        return obj as ActivityLog;
+    }
+
+    private rowToDailySummary(columns: string[], row: any[]): DailySummary {
+        const obj: any = {};
+        columns.forEach((col, i) => {
+            obj[col] = row[i];
+        });
+
+        return obj as DailySummary;
     }
 }
