@@ -109,6 +109,19 @@ async function initializeExtension(context: vscode.ExtensionContext) {
                 vscode.commands.executeCommand('workbench.action.openSettings', 'timetracker');
             })
         );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.switchToProject', async (projectId: number) => {
+                await switchToProject(projectId);
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.viewTimeEntries', async () => {
+                await viewTimeEntries(context);
+            })
+        );
+
         console.log('Commands registered successfully');
 
         // Listen for configuration changes
@@ -642,6 +655,310 @@ function getDashboardHtml(): string {
             } else {
                 return minutes + 'm';
             }
+        }
+
+        // Request initial data
+        vscode.postMessage({ command: 'getData' });
+    </script>
+</body>
+</html>`;
+}
+
+async function switchToProject(projectId: number): Promise<void> {
+    try {
+        const project = db.getProjectById(projectId);
+        if (!project) {
+            vscode.window.showErrorMessage('Project not found');
+            return;
+        }
+
+        // Stop current tracking if any
+        if (timeTracker.getTrackingState() !== TrackingState.STOPPED) {
+            await timeTracker.stopTracking();
+        }
+
+        // Start tracking the selected project
+        await timeTracker.startTrackingProject(project.path, project.name);
+        vscode.window.showInformationMessage(`Switched to: ${project.name}`);
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to switch project: ${error}`);
+    }
+}
+
+async function viewTimeEntries(context: vscode.ExtensionContext): Promise<void> {
+    const panel = vscode.window.createWebviewPanel(
+        'timetrackerEntries',
+        'Time Entries',
+        vscode.ViewColumn.One,
+        {
+            enableScripts: true,
+            localResourceRoots: [context.extensionUri]
+        }
+    );
+
+    panel.webview.html = getTimeEntriesHtml();
+
+    // Handle messages from webview
+    panel.webview.onDidReceiveMessage(
+        async message => {
+            switch (message.command) {
+                case 'getData':
+                    sendTimeEntriesData(panel);
+                    break;
+                case 'editEntry':
+                    await editTimeEntry(message.entryId);
+                    sendTimeEntriesData(panel); // Refresh
+                    break;
+                case 'deleteEntry':
+                    await deleteTimeEntry(message.entryId);
+                    sendTimeEntriesData(panel); // Refresh
+                    break;
+            }
+        }
+    );
+
+    // Send initial data
+    sendTimeEntriesData(panel);
+}
+
+function sendTimeEntriesData(panel: vscode.WebviewPanel): void {
+    // Get last 30 days of entries
+    const endDate = new Date();
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 30);
+
+    const entries = db.getAllTimeEntries(startDate.toISOString(), endDate.toISOString());
+    const projects = new Map<number, string>();
+
+    // Get project names
+    db.getAllProjects().forEach(p => {
+        if (p.id) {
+            projects.set(p.id, p.name);
+        }
+    });
+
+    panel.webview.postMessage({
+        command: 'updateData',
+        entries: entries.map(e => ({
+            ...e,
+            projectName: projects.get(e.project_id) || 'Unknown'
+        }))
+    });
+}
+
+async function editTimeEntry(entryId: number): Promise<void> {
+    const entry = db.getTimeEntry(entryId);
+    if (!entry) {
+        vscode.window.showErrorMessage('Entry not found');
+        return;
+    }
+
+    // Get new start time
+    const startTime = await vscode.window.showInputBox({
+        prompt: 'Enter start time (HH:MM)',
+        value: new Date(entry.start_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+    });
+
+    if (!startTime) {
+        return;
+    }
+
+    // Get new end time
+    const endTime = await vscode.window.showInputBox({
+        prompt: 'Enter end time (HH:MM)',
+        value: entry.end_time ? new Date(entry.end_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
+    });
+
+    if (!endTime) {
+        return;
+    }
+
+    // Get notes
+    const notes = await vscode.window.showInputBox({
+        prompt: 'Enter notes (optional)',
+        value: entry.notes || ''
+    });
+
+    // Parse times
+    const startDate = new Date(entry.start_time);
+    const [startHour, startMin] = startTime.split(':').map(Number);
+    startDate.setHours(startHour, startMin, 0, 0);
+
+    const endDate = new Date(entry.start_time);
+    const [endHour, endMin] = endTime.split(':').map(Number);
+    endDate.setHours(endHour, endMin, 0, 0);
+
+    const duration = Math.floor((endDate.getTime() - startDate.getTime()) / 1000);
+
+    // Update entry
+    db.updateTimeEntry(entryId, {
+        end_time: endDate.toISOString(),
+        duration: duration,
+        notes: notes || undefined
+    });
+
+    vscode.window.showInformationMessage('Time entry updated');
+}
+
+async function deleteTimeEntry(entryId: number): Promise<void> {
+    const confirm = await vscode.window.showQuickPick(['Yes', 'No'], {
+        placeHolder: 'Are you sure you want to delete this entry?'
+    });
+
+    if (confirm === 'Yes') {
+        db.deleteTimeEntry(entryId);
+        vscode.window.showInformationMessage('Time entry deleted');
+    }
+}
+
+function getTimeEntriesHtml(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Time Entries</title>
+    <style>
+        body {
+            padding: 20px;
+            color: var(--vscode-foreground);
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+        }
+
+        h1 {
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th {
+            text-align: left;
+            padding: 8px;
+            background: var(--vscode-editor-background);
+            border-bottom: 2px solid var(--vscode-panel-border);
+            font-weight: 600;
+        }
+
+        td {
+            padding: 8px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
+        tr:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        button {
+            padding: 4px 12px;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        button:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        button.delete {
+            background: var(--vscode-errorForeground);
+            color: white;
+        }
+
+        .no-entries {
+            text-align: center;
+            padding: 40px;
+            color: var(--vscode-descriptionForeground);
+        }
+    </style>
+</head>
+<body>
+    <h1>Time Entries (Last 30 Days)</h1>
+    <div id="content">
+        <div class="no-entries">Loading...</div>
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+
+        window.addEventListener('message', event => {
+            const message = event.data;
+            if (message.command === 'updateData') {
+                renderEntries(message.entries);
+            }
+        });
+
+        function renderEntries(entries) {
+            const content = document.getElementById('content');
+
+            if (entries.length === 0) {
+                content.innerHTML = '<div class="no-entries">No time entries found</div>';
+                return;
+            }
+
+            content.innerHTML = \`
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Project</th>
+                            <th>Start Time</th>
+                            <th>End Time</th>
+                            <th>Duration</th>
+                            <th>Notes</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        \${entries.map(entry => \`
+                            <tr>
+                                <td>\${entry.projectName}</td>
+                                <td>\${formatDateTime(entry.start_time)}</td>
+                                <td>\${entry.end_time ? formatDateTime(entry.end_time) : 'In progress'}</td>
+                                <td>\${formatDuration(entry.duration || 0)}</td>
+                                <td>\${entry.notes || '-'}</td>
+                                <td>
+                                    <div class="actions">
+                                        <button onclick="editEntry(\${entry.id})">Edit</button>
+                                        <button class="delete" onclick="deleteEntry(\${entry.id})">Delete</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        \`).join('')}
+                    </tbody>
+                </table>
+            \`;
+        }
+
+        function formatDateTime(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        }
+
+        function formatDuration(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            return \`\${hours}h \${minutes}m\`;
+        }
+
+        function editEntry(entryId) {
+            vscode.postMessage({ command: 'editEntry', entryId: entryId });
+        }
+
+        function deleteEntry(entryId) {
+            vscode.postMessage({ command: 'deleteEntry', entryId: entryId });
         }
 
         // Request initial data

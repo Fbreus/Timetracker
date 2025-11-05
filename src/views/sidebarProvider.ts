@@ -57,6 +57,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 case 'resume':
                     await vscode.commands.executeCommand('timetracker.resumeTracking');
                     break;
+                case 'switchProject':
+                    if (data.projectId) {
+                        await vscode.commands.executeCommand('timetracker.switchToProject', data.projectId);
+                    }
+                    break;
+                case 'viewEntries':
+                    await vscode.commands.executeCommand('timetracker.viewTimeEntries');
+                    break;
                 case 'showDashboard':
                     await vscode.commands.executeCommand('timetracker.showDashboard');
                     break;
@@ -246,6 +254,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             background: var(--vscode-editor-background);
             border-radius: 3px;
             margin-bottom: 5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .project-item-info {
+            flex: 1;
         }
 
         .project-item-name {
@@ -257,6 +272,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         .project-item-time {
             font-size: 11px;
             color: var(--vscode-descriptionForeground);
+        }
+
+        .project-switch-btn {
+            padding: 4px 8px;
+            font-size: 11px;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .project-switch-btn:hover {
+            background: var(--vscode-button-hoverBackground);
         }
 
         .no-data {
@@ -322,6 +352,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         <div class="section">
             <h2>Actions</h2>
             <div class="action-links">
+                <a class="action-link" onclick="viewTimeEntries()">View Entries</a>
                 <a class="action-link" onclick="showDashboard()">Dashboard</a>
                 <a class="action-link" onclick="addManualEntry()">Manual Entry</a>
                 <a class="action-link" onclick="exportData()">Export</a>
@@ -433,8 +464,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
                 return \`
                     <li class="project-item">
-                        <div class="project-item-name">\${summary.project_name}</div>
-                        <div class="project-item-time">\${hours}h \${minutes}m</div>
+                        <div class="project-item-info">
+                            <div class="project-item-name">\${summary.project_name}</div>
+                            <div class="project-item-time">\${hours}h \${minutes}m</div>
+                        </div>
+                        <button class="project-switch-btn" onclick="switchToProject(\${summary.project_id})">
+                            Switch
+                        </button>
                     </li>
                 \`;
             }).join('');
@@ -466,6 +502,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         function exportData() {
             vscode.postMessage({ type: 'export' });
+        }
+
+        function switchToProject(projectId) {
+            vscode.postMessage({ type: 'switchProject', projectId: projectId });
+        }
+
+        function viewTimeEntries() {
+            vscode.postMessage({ type: 'viewEntries' });
         }
 
         // Request initial data
