@@ -1,7 +1,6 @@
 out
 node_modules
 .vscode-test/
-*.vsix
 *.db
 *.db-journal
 .DS_Store
