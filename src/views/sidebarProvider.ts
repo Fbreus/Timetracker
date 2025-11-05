@@ -4,21 +4,28 @@ import { TimeTrackerDatabase } from '../database/database';
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
-    private timeTracker: TimeTracker;
-    private db: TimeTrackerDatabase;
+    private timeTracker: TimeTracker | null = null;
+    private db: TimeTrackerDatabase | null = null;
+    private initialized: boolean = false;
 
     constructor(
-        private readonly _extensionUri: vscode.Uri,
-        timeTracker: TimeTracker,
-        db: TimeTrackerDatabase
-    ) {
+        private readonly _extensionUri: vscode.Uri
+    ) {}
+
+    public setDependencies(timeTracker: TimeTracker, db: TimeTrackerDatabase): void {
         this.timeTracker = timeTracker;
         this.db = db;
+        this.initialized = true;
 
         // Listen to status updates
         this.timeTracker.onStatusUpdate((status) => {
             this.updateView(status);
         });
+
+        // If view is already open, refresh it
+        if (this._view) {
+            this.refresh();
+        }
     }
 
     public resolveWebviewView(
@@ -71,13 +78,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     public refresh() {
         if (this._view) {
+            if (!this.initialized || !this.timeTracker || !this.db) {
+                // Show loading state
+                this._view.webview.postMessage({
+                    type: 'loading'
+                });
+                return;
+            }
+
             const status = this.timeTracker.getStatus();
             this.updateView(status);
         }
     }
 
     private updateView(status: TrackingStatus) {
-        if (this._view) {
+        if (this._view && this.db) {
             // Get today's stats for all projects
             const today = new Date().toISOString().split('T')[0];
             const tomorrow = new Date();
@@ -109,6 +124,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             color: var(--vscode-foreground);
             font-family: var(--vscode-font-family);
             font-size: var(--vscode-font-size);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: var(--vscode-descriptionForeground);
         }
 
         .section {
@@ -264,41 +285,47 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     </style>
 </head>
 <body>
-    <div class="section">
-        <h2>Current Session</h2>
-        <div class="status">
-            <div class="status-badge" id="statusBadge">Stopped</div>
-            <div class="project-name" id="projectName">No active project</div>
-            <div class="timer" id="sessionTimer">00:00:00</div>
-            <div class="button-group" id="trackingControls">
-                <button id="startBtn" onclick="startTracking()">Start</button>
-                <button id="pauseBtn" onclick="pauseTracking()" style="display:none;">Pause</button>
-                <button id="resumeBtn" onclick="resumeTracking()" style="display:none;">Resume</button>
-                <button id="stopBtn" onclick="stopTracking()" style="display:none;">Stop</button>
+    <div id="loadingView" class="loading" style="display:block;">
+        <p>Initializing Time Tracker...</p>
+    </div>
+
+    <div id="mainView" style="display:none;">
+        <div class="section">
+            <h2>Current Session</h2>
+            <div class="status">
+                <div class="status-badge" id="statusBadge">Stopped</div>
+                <div class="project-name" id="projectName">No active project</div>
+                <div class="timer" id="sessionTimer">00:00:00</div>
+                <div class="button-group" id="trackingControls">
+                    <button id="startBtn" onclick="startTracking()">Start</button>
+                    <button id="pauseBtn" onclick="pauseTracking()" style="display:none;">Pause</button>
+                    <button id="resumeBtn" onclick="resumeTracking()" style="display:none;">Resume</button>
+                    <button id="stopBtn" onclick="stopTracking()" style="display:none;">Stop</button>
+                </div>
             </div>
         </div>
-    </div>
 
-    <div class="section">
-        <h2>Today's Total</h2>
-        <div class="status">
-            <div class="time-value" id="todayTotal">0h 0m</div>
+        <div class="section">
+            <h2>Today's Total</h2>
+            <div class="status">
+                <div class="time-value" id="todayTotal">0h 0m</div>
+            </div>
         </div>
-    </div>
 
-    <div class="section">
-        <h2>Today's Projects</h2>
-        <ul class="project-list" id="projectList">
-            <li class="no-data">No projects tracked today</li>
-        </ul>
-    </div>
+        <div class="section">
+            <h2>Today's Projects</h2>
+            <ul class="project-list" id="projectList">
+                <li class="no-data">No projects tracked today</li>
+            </ul>
+        </div>
 
-    <div class="section">
-        <h2>Actions</h2>
-        <div class="action-links">
-            <a class="action-link" onclick="showDashboard()">Dashboard</a>
-            <a class="action-link" onclick="addManualEntry()">Manual Entry</a>
-            <a class="action-link" onclick="exportData()">Export</a>
+        <div class="section">
+            <h2>Actions</h2>
+            <div class="action-links">
+                <a class="action-link" onclick="showDashboard()">Dashboard</a>
+                <a class="action-link" onclick="addManualEntry()">Manual Entry</a>
+                <a class="action-link" onclick="exportData()">Export</a>
+            </div>
         </div>
     </div>
 
@@ -310,7 +337,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         window.addEventListener('message', event => {
             const message = event.data;
             if (message.type === 'statusUpdate') {
+                // Hide loading, show main view
+                document.getElementById('loadingView').style.display = 'none';
+                document.getElementById('mainView').style.display = 'block';
                 updateUI(message.status);
+            } else if (message.type === 'loading') {
+                // Show loading view
+                document.getElementById('loadingView').style.display = 'block';
+                document.getElementById('mainView').style.display = 'none';
             }
         });
 

@@ -11,9 +11,25 @@ let timeTracker: TimeTracker;
 let sidebarProvider: SidebarProvider;
 let exporter: DataExporter;
 
-export async function activate(context: vscode.ExtensionContext) {
+export function activate(context: vscode.ExtensionContext) {
     console.log('Time Tracker extension is activating...');
 
+    // Register sidebar provider immediately (synchronously)
+    // This prevents "no data provider" error
+    sidebarProvider = new SidebarProvider(context.extensionUri);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider('timetracker.sidebar', sidebarProvider)
+    );
+    console.log('Sidebar provider registered');
+
+    // Initialize asynchronously
+    initializeExtension(context).catch(error => {
+        console.error('Failed to initialize Time Tracker:', error);
+        vscode.window.showErrorMessage(`Time Tracker failed to initialize: ${error}`);
+    });
+}
+
+async function initializeExtension(context: vscode.ExtensionContext) {
     try {
         // Initialize database
         console.log('Initializing database...');
@@ -36,13 +52,10 @@ export async function activate(context: vscode.ExtensionContext) {
         exporter = new DataExporter(db);
         console.log('Exporter initialized successfully');
 
-        // Register sidebar provider
-        console.log('Registering sidebar provider...');
-        sidebarProvider = new SidebarProvider(context.extensionUri, timeTracker, db);
-        context.subscriptions.push(
-            vscode.window.registerWebviewViewProvider('timetracker.sidebar', sidebarProvider)
-        );
-        console.log('Sidebar provider registered successfully');
+        // Set dependencies on sidebar provider
+        console.log('Setting sidebar provider dependencies...');
+        sidebarProvider.setDependencies(timeTracker, db);
+        console.log('Sidebar provider fully initialized');
 
         // Register commands
         console.log('Registering commands...');
