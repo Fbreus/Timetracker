@@ -12,112 +12,134 @@ let sidebarProvider: SidebarProvider;
 let exporter: DataExporter;
 
 export function activate(context: vscode.ExtensionContext) {
-    console.log('Time Tracker extension is now active');
+    console.log('Time Tracker extension is activating...');
 
-    // Initialize database
-    db = new TimeTrackerDatabase(context.globalStorageUri.fsPath);
+    try {
+        // Initialize database
+        console.log('Initializing database...');
+        db = new TimeTrackerDatabase(context.globalStorageUri.fsPath);
+        console.log('Database initialized successfully');
 
-    // Get configuration
-    const config = vscode.workspace.getConfiguration('timetracker');
-    const idleTimeout = config.get<number>('idleTimeout', 5);
+        // Get configuration
+        const config = vscode.workspace.getConfiguration('timetracker');
+        const idleTimeout = config.get<number>('idleTimeout', 5);
 
-    // Initialize time tracker
-    timeTracker = new TimeTracker(db, idleTimeout);
-    timeTracker.start();
+        // Initialize time tracker
+        console.log('Initializing time tracker...');
+        timeTracker = new TimeTracker(db, idleTimeout);
+        timeTracker.start();
+        console.log('Time tracker initialized successfully');
 
-    // Initialize exporter
-    exporter = new DataExporter(db);
+        // Initialize exporter
+        console.log('Initializing exporter...');
+        exporter = new DataExporter(db);
+        console.log('Exporter initialized successfully');
 
-    // Register sidebar provider
-    sidebarProvider = new SidebarProvider(context.extensionUri, timeTracker, db);
-    context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider('timetracker.sidebar', sidebarProvider)
-    );
+        // Register sidebar provider
+        console.log('Registering sidebar provider...');
+        sidebarProvider = new SidebarProvider(context.extensionUri, timeTracker, db);
+        context.subscriptions.push(
+            vscode.window.registerWebviewViewProvider('timetracker.sidebar', sidebarProvider)
+        );
+        console.log('Sidebar provider registered successfully');
 
-    // Register commands
-    context.subscriptions.push(
-        vscode.commands.registerCommand('timetracker.startTracking', async () => {
-            await startTracking();
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('timetracker.stopTracking', async () => {
-            await timeTracker.stopTracking();
-            vscode.window.showInformationMessage('Time tracking stopped');
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('timetracker.pauseTracking', async () => {
-            await timeTracker.pauseTracking();
-            vscode.window.showInformationMessage('Time tracking paused');
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('timetracker.resumeTracking', async () => {
-            await timeTracker.resumeTracking();
-            vscode.window.showInformationMessage('Time tracking resumed');
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('timetracker.showDashboard', async () => {
-            await showDashboard(context);
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('timetracker.addManualEntry', async () => {
-            await addManualEntry();
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('timetracker.exportData', async () => {
-            await exportData();
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('timetracker.openSettings', () => {
-            vscode.commands.executeCommand('workbench.action.openSettings', 'timetracker');
-        })
-    );
-
-    // Listen for configuration changes
-    context.subscriptions.push(
-        vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('timetracker.idleTimeout')) {
-                const newTimeout = vscode.workspace.getConfiguration('timetracker').get<number>('idleTimeout', 5);
-                timeTracker.setIdleTimeout(newTimeout);
-            }
-        })
-    );
-
-    // Auto-start tracking if enabled
-    const autoStart = config.get<boolean>('autoStart', true);
-    if (autoStart && vscode.workspace.workspaceFolders) {
-        startTracking();
-    }
-
-    // Watch for workspace changes
-    context.subscriptions.push(
-        vscode.workspace.onDidChangeWorkspaceFolders(async (e) => {
-            if (e.added.length > 0 && autoStart) {
+        // Register commands
+        console.log('Registering commands...');
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.startTracking', async () => {
                 await startTracking();
-            }
-        })
-    );
+            })
+        );
 
-    // Cleanup on deactivation
-    context.subscriptions.push({
-        dispose: () => {
-            timeTracker.stop();
-            db.close();
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.stopTracking', async () => {
+                await timeTracker.stopTracking();
+                vscode.window.showInformationMessage('Time tracking stopped');
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.pauseTracking', async () => {
+                await timeTracker.pauseTracking();
+                vscode.window.showInformationMessage('Time tracking paused');
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.resumeTracking', async () => {
+                await timeTracker.resumeTracking();
+                vscode.window.showInformationMessage('Time tracking resumed');
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.showDashboard', async () => {
+                await showDashboard(context);
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.addManualEntry', async () => {
+                await addManualEntry();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.exportData', async () => {
+                await exportData();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.openSettings', () => {
+                vscode.commands.executeCommand('workbench.action.openSettings', 'timetracker');
+            })
+        );
+        console.log('Commands registered successfully');
+
+        // Listen for configuration changes
+        context.subscriptions.push(
+            vscode.workspace.onDidChangeConfiguration(e => {
+                if (e.affectsConfiguration('timetracker.idleTimeout')) {
+                    const newTimeout = vscode.workspace.getConfiguration('timetracker').get<number>('idleTimeout', 5);
+                    timeTracker.setIdleTimeout(newTimeout);
+                }
+            })
+        );
+
+        // Auto-start tracking if enabled
+        const autoStart = config.get<boolean>('autoStart', true);
+        if (autoStart && vscode.workspace.workspaceFolders) {
+            startTracking();
         }
-    });
+
+        // Watch for workspace changes
+        context.subscriptions.push(
+            vscode.workspace.onDidChangeWorkspaceFolders(async (e) => {
+                if (e.added.length > 0 && autoStart) {
+                    await startTracking();
+                }
+            })
+        );
+
+        // Cleanup on deactivation
+        context.subscriptions.push({
+            dispose: () => {
+                if (timeTracker) {
+                    timeTracker.stop();
+                }
+                if (db) {
+                    db.close();
+                }
+            }
+        });
+
+        console.log('Time Tracker extension activated successfully!');
+    } catch (error) {
+        console.error('Failed to activate Time Tracker extension:', error);
+        vscode.window.showErrorMessage(`Time Tracker failed to activate: ${error}`);
+        throw error;
+    }
 }
 
 async function startTracking(): Promise<void> {
