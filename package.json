@@ -20,7 +20,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onView:timetracker.sidebar"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -56,6 +57,14 @@
       {
         "command": "timetracker.openSettings",
         "title": "Time Tracker: Open Settings"
+      },
+      {
+        "command": "timetracker.switchToProject",
+        "title": "Time Tracker: Switch to Project"
+      },
+      {
+        "command": "timetracker.viewTimeEntries",
+        "title": "Time Tracker: View Time Entries"
       }
     ],
     "viewsContainers": {
