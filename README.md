@@ -134,7 +134,6 @@ Go to Settings (File > Preferences > Settings) and search for "Time Tracker":
 | `timetracker.dataRetentionDays` | number | 365 | Number of days to retain data (0 = forever) |
 | `timetracker.synergy.enabled` | boolean | false | Enable Synergy PSA integration |
 | `timetracker.synergy.resourceId` | number | - | Your Synergy resource/employee ID |
-| `timetracker.synergy.autoSubmit` | boolean | false | Auto-submit when stopping tracking |
 
 For complete Synergy configuration options, see [SYNERGY_INTEGRATION.md](SYNERGY_INTEGRATION.md)
 

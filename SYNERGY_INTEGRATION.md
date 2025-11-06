@@ -39,7 +39,6 @@ All endpoint URLs are pre-configured with default values, but you can customize 
 - `timetracker.synergy.defaultCustomerId`: Default customer GUID
 - `timetracker.synergy.defaultProject`: Default project code
 - `timetracker.synergy.defaultActivity`: Default activity type (CONSULTANCY or DEVELOPMENT)
-- `timetracker.synergy.autoSubmit`: Automatically submit when stopping tracking
 
 ## How to Use
 

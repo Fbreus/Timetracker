@@ -180,11 +180,6 @@
           "enum": ["CONSULTANCY", "DEVELOPMENT"],
           "default": "CONSULTANCY",
           "description": "Default activity type for Synergy submissions"
-        },
-        "timetracker.synergy.autoSubmit": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically submit time entries to Synergy when stopping tracking"
         }
       }
     }
