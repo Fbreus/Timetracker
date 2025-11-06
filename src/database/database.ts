@@ -15,6 +15,7 @@ export interface Project {
 export interface TimeEntry {
     id?: number;
     project_id: number;
+    customer_id?: number;
     start_time: string;
     end_time?: string;
     duration?: number;
@@ -43,6 +44,16 @@ export interface DailySummary {
     updated_at?: string;
 }
 
+export interface Customer {
+    id?: number;
+    account_id: string;
+    account_name: string;
+    res_id?: number;
+    last_synced_at?: string;
+    created_at?: string;
+    updated_at?: string;
+}
+
 const DATABASE_SCHEMA = `
 -- Projects table
 CREATE TABLE IF NOT EXISTS projects (
@@ -55,10 +66,22 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Customers table (Synergy)
+CREATE TABLE IF NOT EXISTS customers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id TEXT NOT NULL UNIQUE,
+    account_name TEXT NOT NULL,
+    res_id INTEGER,
+    last_synced_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Time entries table
 CREATE TABLE IF NOT EXISTS time_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL,
+    customer_id INTEGER,
     start_time DATETIME NOT NULL,
     end_time DATETIME,
     duration INTEGER,
@@ -67,7 +90,8 @@ CREATE TABLE IF NOT EXISTS time_entries (
     is_billable BOOLEAN DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL
 );
 
 -- Activity log table
@@ -102,8 +126,11 @@ CREATE TABLE IF NOT EXISTS settings (
 
 -- Indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_time_entries_project ON time_entries(project_id);
+CREATE INDEX IF NOT EXISTS idx_time_entries_customer ON time_entries(customer_id);
 CREATE INDEX IF NOT EXISTS idx_time_entries_start_time ON time_entries(start_time);
 CREATE INDEX IF NOT EXISTS idx_time_entries_end_time ON time_entries(end_time);
+CREATE INDEX IF NOT EXISTS idx_customers_account_id ON customers(account_id);
+CREATE INDEX IF NOT EXISTS idx_customers_res_id ON customers(res_id);
 CREATE INDEX IF NOT EXISTS idx_daily_summaries_date ON daily_summaries(date);
 CREATE INDEX IF NOT EXISTS idx_daily_summaries_project_date ON daily_summaries(project_id, date);
 CREATE INDEX IF NOT EXISTS idx_activity_log_entry ON activity_log(time_entry_id);
@@ -264,9 +291,10 @@ export class TimeTrackerDatabase {
         }
 
         this.db.run(
-            'INSERT INTO time_entries (project_id, start_time, end_time, duration, is_manual, notes, is_billable) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO time_entries (project_id, customer_id, start_time, end_time, duration, is_manual, notes, is_billable) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             [
                 entry.project_id,
+                entry.customer_id || null,
                 entry.start_time,
                 entry.end_time || null,
                 entry.duration || null,
@@ -378,6 +406,10 @@ export class TimeTrackerDatabase {
         const fields: string[] = [];
         const values: any[] = [];
 
+        if (updates.customer_id !== undefined) {
+            fields.push('customer_id = ?');
+            values.push(updates.customer_id);
+        }
         if (updates.end_time !== undefined) {
             fields.push('end_time = ?');
             values.push(updates.end_time);
@@ -595,6 +627,164 @@ export class TimeTrackerDatabase {
         return result[0].values[0][0] as string;
     }
 
+    // Customer operations
+    createCustomer(customer: Customer): number {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run(
+            'INSERT INTO customers (account_id, account_name, res_id, last_synced_at) VALUES (?, ?, ?, ?)',
+            [customer.account_id, customer.account_name, customer.res_id || null, customer.last_synced_at || new Date().toISOString()]
+        );
+
+        const result = this.db.exec('SELECT last_insert_rowid() as id');
+        this.saveToFile();
+        return result[0].values[0][0] as number;
+    }
+
+    upsertCustomer(customer: Customer): number {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        // Check if customer exists
+        const existing = this.getCustomerByAccountId(customer.account_id);
+
+        if (existing) {
+            // Update existing customer
+            this.db.run(
+                'UPDATE customers SET account_name = ?, res_id = ?, last_synced_at = ?, updated_at = CURRENT_TIMESTAMP WHERE account_id = ?',
+                [customer.account_name, customer.res_id || null, new Date().toISOString(), customer.account_id]
+            );
+            this.saveToFile();
+            return existing.id!;
+        } else {
+            // Create new customer
+            return this.createCustomer(customer);
+        }
+    }
+
+    getCustomerById(id: number): Customer | undefined {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec('SELECT * FROM customers WHERE id = ?', [id]);
+
+        if (result.length === 0 || result[0].values.length === 0) {
+            return undefined;
+        }
+
+        return this.rowToCustomer(result[0].columns, result[0].values[0]);
+    }
+
+    getCustomerByAccountId(accountId: string): Customer | undefined {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec('SELECT * FROM customers WHERE account_id = ?', [accountId]);
+
+        if (result.length === 0 || result[0].values.length === 0) {
+            return undefined;
+        }
+
+        return this.rowToCustomer(result[0].columns, result[0].values[0]);
+    }
+
+    getAllCustomers(): Customer[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec('SELECT * FROM customers ORDER BY account_name ASC');
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToCustomer(result[0].columns, row));
+    }
+
+    getCustomersByResId(resId: number): Customer[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec('SELECT * FROM customers WHERE res_id = ? ORDER BY account_name ASC', [resId]);
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToCustomer(result[0].columns, row));
+    }
+
+    updateCustomer(id: number, updates: Partial<Customer>): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const fields: string[] = [];
+        const values: any[] = [];
+
+        if (updates.account_name !== undefined) {
+            fields.push('account_name = ?');
+            values.push(updates.account_name);
+        }
+        if (updates.res_id !== undefined) {
+            fields.push('res_id = ?');
+            values.push(updates.res_id);
+        }
+        if (updates.last_synced_at !== undefined) {
+            fields.push('last_synced_at = ?');
+            values.push(updates.last_synced_at);
+        }
+
+        if (fields.length > 0) {
+            fields.push('updated_at = CURRENT_TIMESTAMP');
+            values.push(id);
+
+            this.db.run(
+                `UPDATE customers SET ${fields.join(', ')} WHERE id = ?`,
+                values
+            );
+            this.saveToFile();
+        }
+    }
+
+    deleteCustomer(id: number): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run('DELETE FROM customers WHERE id = ?', [id]);
+        this.saveToFile();
+    }
+
+    // Sync customers from Synergy API
+    syncCustomers(customers: Array<{account_id: string, account_name: string}>, resId?: number): number {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        let syncedCount = 0;
+        const syncTime = new Date().toISOString();
+
+        for (const customer of customers) {
+            this.upsertCustomer({
+                account_id: customer.account_id,
+                account_name: customer.account_name,
+                res_id: resId,
+                last_synced_at: syncTime
+            });
+            syncedCount++;
+        }
+
+        return syncedCount;
+    }
+
     // Data cleanup
     cleanupOldData(retentionDays: number): void {
         if (!this.db) {
@@ -668,5 +858,14 @@ export class TimeTrackerDatabase {
         });
 
         return obj as DailySummary;
+    }
+
+    private rowToCustomer(columns: string[], row: any[]): Customer {
+        const obj: any = {};
+        columns.forEach((col, i) => {
+            obj[col] = row[i];
+        });
+
+        return obj as Customer;
     }
 }
