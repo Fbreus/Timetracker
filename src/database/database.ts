@@ -912,7 +912,6 @@ export class TimeTrackerDatabase {
         return syncedCount;
     }
 
->>>>>>> origin/claude/get-customers-feature-011CUsENBxYiC8AmeRv6YnQZ
     // Data cleanup
     cleanupOldData(retentionDays: number): void {
         if (!this.db) {

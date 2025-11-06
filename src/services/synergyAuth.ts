@@ -89,7 +89,7 @@ export class SynergyAuthService {
             this.token = data.access_token;
 
             // Set expiration to 90% of the actual expiration time to refresh before it expires
-            const expiresInMs = data.expires_in * 1000 * 0.9;
+            const expiresInMs = (data.expires_in || 3600) * 1000 * 0.9;
             this.tokenExpiration = new Date(Date.now() + expiresInMs);
 
             console.log(`Synergy token obtained, expires at: ${this.tokenExpiration.toISOString()}`);
