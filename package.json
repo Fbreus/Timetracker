@@ -65,6 +65,18 @@
       {
         "command": "timetracker.viewTimeEntries",
         "title": "Time Tracker: View Time Entries"
+      },
+      {
+        "command": "timetracker.synergy.testConnection",
+        "title": "Time Tracker: Test Synergy Connection"
+      },
+      {
+        "command": "timetracker.synergy.syncNow",
+        "title": "Time Tracker: Sync to Synergy Now"
+      },
+      {
+        "command": "timetracker.synergy.viewSyncStatus",
+        "title": "Time Tracker: View Synergy Sync Status"
       }
     ],
     "viewsContainers": {
@@ -122,6 +134,31 @@
           "type": "number",
           "default": 365,
           "description": "Number of days to retain data (0 = forever)"
+        },
+        "timetracker.synergy.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Synergy API integration"
+        },
+        "timetracker.synergy.apiUrl": {
+          "type": "string",
+          "default": "https://synergy.esc.be/TopDeskAPI_CRM",
+          "description": "Synergy API base URL"
+        },
+        "timetracker.synergy.username": {
+          "type": "string",
+          "default": "",
+          "description": "Synergy API username"
+        },
+        "timetracker.synergy.password": {
+          "type": "string",
+          "default": "",
+          "description": "Synergy API password (stored securely)"
+        },
+        "timetracker.synergy.autoSync": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically sync time entries to Synergy when they are completed"
         }
       }
     }

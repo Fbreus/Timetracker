@@ -21,6 +21,9 @@ export interface TimeEntry {
     is_manual: boolean;
     notes?: string;
     is_billable: boolean;
+    synergy_synced: boolean;
+    synergy_sync_date?: string;
+    synergy_id?: string;
     created_at?: string;
     updated_at?: string;
 }
@@ -65,6 +68,9 @@ CREATE TABLE IF NOT EXISTS time_entries (
     is_manual BOOLEAN DEFAULT 0,
     notes TEXT,
     is_billable BOOLEAN DEFAULT 0,
+    synergy_synced BOOLEAN DEFAULT 0,
+    synergy_sync_date DATETIME,
+    synergy_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -104,6 +110,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE INDEX IF NOT EXISTS idx_time_entries_project ON time_entries(project_id);
 CREATE INDEX IF NOT EXISTS idx_time_entries_start_time ON time_entries(start_time);
 CREATE INDEX IF NOT EXISTS idx_time_entries_end_time ON time_entries(end_time);
+CREATE INDEX IF NOT EXISTS idx_time_entries_synergy_synced ON time_entries(synergy_synced);
 CREATE INDEX IF NOT EXISTS idx_daily_summaries_date ON daily_summaries(date);
 CREATE INDEX IF NOT EXISTS idx_daily_summaries_project_date ON daily_summaries(project_id, date);
 CREATE INDEX IF NOT EXISTS idx_activity_log_entry ON activity_log(time_entry_id);
@@ -264,7 +271,7 @@ export class TimeTrackerDatabase {
         }
 
         this.db.run(
-            'INSERT INTO time_entries (project_id, start_time, end_time, duration, is_manual, notes, is_billable) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            'INSERT INTO time_entries (project_id, start_time, end_time, duration, is_manual, notes, is_billable, synergy_synced, synergy_sync_date, synergy_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [
                 entry.project_id,
                 entry.start_time,
@@ -272,7 +279,10 @@ export class TimeTrackerDatabase {
                 entry.duration || null,
                 entry.is_manual ? 1 : 0,
                 entry.notes || null,
-                entry.is_billable ? 1 : 0
+                entry.is_billable ? 1 : 0,
+                entry.synergy_synced ? 1 : 0,
+                entry.synergy_sync_date || null,
+                entry.synergy_id || null
             ]
         );
 
@@ -394,6 +404,18 @@ export class TimeTrackerDatabase {
             fields.push('is_billable = ?');
             values.push(updates.is_billable ? 1 : 0);
         }
+        if (updates.synergy_synced !== undefined) {
+            fields.push('synergy_synced = ?');
+            values.push(updates.synergy_synced ? 1 : 0);
+        }
+        if (updates.synergy_sync_date !== undefined) {
+            fields.push('synergy_sync_date = ?');
+            values.push(updates.synergy_sync_date);
+        }
+        if (updates.synergy_id !== undefined) {
+            fields.push('synergy_id = ?');
+            values.push(updates.synergy_id);
+        }
 
         if (fields.length > 0) {
             fields.push('updated_at = CURRENT_TIMESTAMP');
@@ -413,6 +435,35 @@ export class TimeTrackerDatabase {
         }
 
         this.db.run('DELETE FROM time_entries WHERE id = ?', [id]);
+        this.saveToFile();
+    }
+
+    // Synergy sync operations
+    getUnsyncedTimeEntries(): TimeEntry[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT * FROM time_entries WHERE synergy_synced = 0 AND end_time IS NOT NULL ORDER BY start_time ASC'
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToTimeEntry(result[0].columns, row));
+    }
+
+    markTimeEntrySynced(id: number, synergyId?: string): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run(
+            'UPDATE time_entries SET synergy_synced = 1, synergy_sync_date = CURRENT_TIMESTAMP, synergy_id = ? WHERE id = ?',
+            [synergyId || null, id]
+        );
         this.saveToFile();
     }
 
@@ -648,6 +699,7 @@ export class TimeTrackerDatabase {
 
         obj.is_manual = Boolean(obj.is_manual);
         obj.is_billable = Boolean(obj.is_billable);
+        obj.synergy_synced = Boolean(obj.synergy_synced);
 
         return obj as TimeEntry;
     }

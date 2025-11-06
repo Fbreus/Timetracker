@@ -5,11 +5,15 @@ import { TimeTracker, TrackingState } from './tracking/timeTracker';
 import { SidebarProvider } from './views/sidebarProvider';
 import { DataExporter } from './utils/exporter';
 import { parseTimeString } from './utils/formatters';
+import { SynergyAuthService } from './services/synergyAuth';
+import { SynergySyncService } from './services/synergySync';
 
 let db: TimeTrackerDatabase;
 let timeTracker: TimeTracker;
 let sidebarProvider: SidebarProvider;
 let exporter: DataExporter;
+let synergyAuth: SynergyAuthService;
+let synergySync: SynergySyncService;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Time Tracker extension is activating...');
@@ -54,6 +58,12 @@ async function initializeExtension(context: vscode.ExtensionContext) {
         console.log('Initializing exporter...');
         exporter = new DataExporter(db);
         console.log('Exporter initialized successfully');
+
+        // Initialize Synergy services
+        console.log('Initializing Synergy services...');
+        synergyAuth = new SynergyAuthService();
+        synergySync = new SynergySyncService(db, synergyAuth);
+        console.log('Synergy services initialized successfully');
 
         // Set dependencies on sidebar provider
         console.log('Setting sidebar provider dependencies...');
@@ -122,6 +132,25 @@ async function initializeExtension(context: vscode.ExtensionContext) {
         context.subscriptions.push(
             vscode.commands.registerCommand('timetracker.viewTimeEntries', async () => {
                 await viewTimeEntries(context);
+            })
+        );
+
+        // Synergy commands
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.synergy.testConnection', async () => {
+                await testSynergyConnection();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.synergy.syncNow', async () => {
+                await syncToSynergyNow();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.synergy.viewSyncStatus', async () => {
+                await viewSynergySyncStatus();
             })
         );
 
@@ -969,6 +998,92 @@ function getTimeEntriesHtml(): string {
     </script>
 </body>
 </html>`;
+}
+
+// Synergy command handlers
+async function testSynergyConnection(): Promise<void> {
+    try {
+        vscode.window.showInformationMessage('Testing Synergy connection...');
+        const result = await synergyAuth.testConnection();
+
+        if (result.success) {
+            vscode.window.showInformationMessage(`✓ ${result.message}`);
+        } else {
+            vscode.window.showErrorMessage(`✗ Synergy connection failed: ${result.message}`);
+        }
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to test connection: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+}
+
+async function syncToSynergyNow(): Promise<void> {
+    if (!synergyAuth.isEnabled()) {
+        vscode.window.showWarningMessage('Synergy integration is not enabled. Please configure it in settings.');
+        return;
+    }
+
+    try {
+        // Get unsynced entries count first
+        const status = synergySync.getSyncStatus();
+
+        if (status.pending === 0) {
+            vscode.window.showInformationMessage('All time entries are already synced to Synergy!');
+            return;
+        }
+
+        // Show progress
+        await vscode.window.withProgress({
+            location: vscode.ProgressLocation.Notification,
+            title: `Syncing ${status.pending} time entries to Synergy...`,
+            cancellable: false
+        }, async (progress) => {
+            const result = await synergySync.syncAllUnsyncedEntries();
+
+            if (result.success) {
+                vscode.window.showInformationMessage(
+                    `✓ Successfully synced ${result.entriesSynced} of ${result.entriesProcessed} time entries to Synergy`
+                );
+            } else {
+                let errorMessage = `Sync completed with errors: ${result.entriesSynced} succeeded, ${result.entriesFailed} failed`;
+
+                if (result.errors.length > 0) {
+                    errorMessage += `\n\nFirst error: ${result.errors[0].error}`;
+                }
+
+                vscode.window.showWarningMessage(errorMessage);
+            }
+        });
+    } catch (error) {
+        vscode.window.showErrorMessage(`Sync failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+}
+
+async function viewSynergySyncStatus(): Promise<void> {
+    try {
+        const status = synergySync.getSyncStatus();
+        const enabled = synergyAuth.isEnabled();
+
+        const statusLines = [
+            `Synergy Integration Status:`,
+            ``,
+            `Enabled: ${enabled ? '✓ Yes' : '✗ No'}`,
+            `Total Time Entries: ${status.total}`,
+            `Synced to Synergy: ${status.synced}`,
+            `Pending Sync: ${status.pending}`,
+        ];
+
+        if (!enabled) {
+            statusLines.push('');
+            statusLines.push('⚠ To enable Synergy integration, configure your credentials in settings.');
+        } else if (status.pending > 0) {
+            statusLines.push('');
+            statusLines.push('💡 Run "Time Tracker: Sync to Synergy Now" to sync pending entries.');
+        }
+
+        vscode.window.showInformationMessage(statusLines.join('\n'), { modal: true });
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to get sync status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
 }
 
 export function deactivate() {
