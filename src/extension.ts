@@ -7,6 +7,7 @@ import { DataExporter } from './utils/exporter';
 import { parseTimeString } from './utils/formatters';
 import { SynergyAuthService } from './services/synergyAuth';
 import { SynergySyncService } from './services/synergySync';
+import { SynergyService } from './services/synergyService';
 
 let db: TimeTrackerDatabase;
 let timeTracker: TimeTracker;
@@ -14,6 +15,7 @@ let sidebarProvider: SidebarProvider;
 let exporter: DataExporter;
 let synergyAuth: SynergyAuthService;
 let synergySync: SynergySyncService;
+let synergyService: SynergyService;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Time Tracker extension is activating...');
@@ -63,6 +65,7 @@ async function initializeExtension(context: vscode.ExtensionContext) {
         console.log('Initializing Synergy services...');
         synergyAuth = new SynergyAuthService();
         synergySync = new SynergySyncService(db, synergyAuth);
+        synergyService = new SynergyService();
         console.log('Synergy services initialized successfully');
 
         // Set dependencies on sidebar provider
@@ -135,7 +138,7 @@ async function initializeExtension(context: vscode.ExtensionContext) {
             })
         );
 
-        // Synergy commands
+        // Synergy commands - Direct API sync
         context.subscriptions.push(
             vscode.commands.registerCommand('timetracker.synergy.testConnection', async () => {
                 await testSynergyConnection();
@@ -154,6 +157,19 @@ async function initializeExtension(context: vscode.ExtensionContext) {
             })
         );
 
+        // Synergy commands - PSA submission
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.submitToSynergy', async () => {
+                await submitToSynergy();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.testSynergyConnection', async () => {
+                await testSynergyConnectionPSA();
+            })
+        );
+
         console.log('Commands registered successfully');
 
         // Listen for configuration changes
@@ -162,6 +178,9 @@ async function initializeExtension(context: vscode.ExtensionContext) {
                 if (e.affectsConfiguration('timetracker.idleTimeout')) {
                     const newTimeout = vscode.workspace.getConfiguration('timetracker').get<number>('idleTimeout', 5);
                     timeTracker.setIdleTimeout(newTimeout);
+                }
+                if (e.affectsConfiguration('timetracker.synergy')) {
+                    synergyService.reloadConfig();
                 }
             })
         );
@@ -1000,7 +1019,7 @@ function getTimeEntriesHtml(): string {
 </html>`;
 }
 
-// Synergy command handlers
+// Synergy command handlers - Direct API Sync
 async function testSynergyConnection(): Promise<void> {
     try {
         vscode.window.showInformationMessage('Testing Synergy connection...');
@@ -1083,6 +1102,152 @@ async function viewSynergySyncStatus(): Promise<void> {
         vscode.window.showInformationMessage(statusLines.join('\n'), { modal: true });
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to get sync status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+}
+
+// Synergy command handlers - PSA Submission
+async function submitToSynergy(): Promise<void> {
+    if (!synergyService.isEnabled()) {
+        const enable = await vscode.window.showQuickPick(['Yes', 'No'], {
+            placeHolder: 'Synergy integration is not enabled. Enable it now?'
+        });
+
+        if (enable === 'Yes') {
+            await vscode.commands.executeCommand('workbench.action.openSettings', 'timetracker.synergy');
+        }
+        return;
+    }
+
+    // Get unsubmitted entries
+    const unsubmittedEntries = db.getUnsubmittedTimeEntries();
+
+    if (unsubmittedEntries.length === 0) {
+        vscode.window.showInformationMessage('No time entries to submit to Synergy');
+        return;
+    }
+
+    // Show selection of entries to submit
+    const items = unsubmittedEntries.map(entry => {
+        const project = db.getProjectById(entry.project_id);
+        const startTime = new Date(entry.start_time);
+        const hours = (entry.duration || 0) / 3600;
+
+        return {
+            label: `${project?.name || 'Unknown'} - ${hours.toFixed(2)}h`,
+            description: startTime.toLocaleDateString(),
+            detail: entry.notes || 'No description',
+            entry: entry
+        };
+    });
+
+    const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: 'Select time entry to submit to Synergy',
+        canPickMany: false
+    });
+
+    if (!selected) {
+        return;
+    }
+
+    // Get description
+    const description = await vscode.window.showInputBox({
+        prompt: 'Enter description for Synergy',
+        value: selected.entry.notes || '',
+        placeHolder: 'Work description'
+    });
+
+    if (!description) {
+        return;
+    }
+
+    // Get internal remarks
+    const internalRemarks = await vscode.window.showInputBox({
+        prompt: 'Enter internal remarks (optional)',
+        placeHolder: 'Internal notes'
+    });
+
+    // Get external remarks
+    const externalRemarks = await vscode.window.showInputBox({
+        prompt: 'Enter external remarks (optional)',
+        placeHolder: 'Customer-facing notes'
+    });
+
+    // Get project/customer (optional)
+    const useCustomProject = await vscode.window.showQuickPick(['Use Default', 'Specify Project'], {
+        placeHolder: 'Use default project or specify?'
+    });
+
+    let projectNo: string | undefined;
+    let customerId: string | undefined;
+
+    if (useCustomProject === 'Specify Project') {
+        const projectInput = await vscode.window.showInputBox({
+            prompt: 'Enter project number (or ProjectNo|CustomerID)',
+            placeHolder: 'PROJECT-001 or PROJECT-001|customer-guid'
+        });
+
+        if (projectInput) {
+            projectNo = projectInput;
+        }
+    }
+
+    try {
+        vscode.window.showInformationMessage('Submitting to Synergy...');
+
+        const hours = (selected.entry.duration || 0) / 3600;
+        const startTime = new Date(selected.entry.start_time);
+
+        const result = await synergyService.submitTimeEntry(
+            startTime,
+            hours,
+            description,
+            {
+                projectNo,
+                customerId,
+                internalRemarks,
+                externalRemarks
+            }
+        );
+
+        if (result.success) {
+            // Mark as submitted in database
+            db.markSynergySubmitted(
+                selected.entry.id!,
+                customerId || '',
+                projectNo || '',
+                JSON.stringify(result.data)
+            );
+
+            vscode.window.showInformationMessage('Successfully submitted to Synergy PSA');
+
+            // Refresh sidebar
+            sidebarProvider.refresh();
+        } else {
+            vscode.window.showErrorMessage(`Failed to submit to Synergy: ${result.error}`);
+        }
+    } catch (error) {
+        vscode.window.showErrorMessage(`Error submitting to Synergy: ${error}`);
+    }
+}
+
+async function testSynergyConnectionPSA(): Promise<void> {
+    if (!synergyService.isEnabled()) {
+        vscode.window.showWarningMessage('Synergy integration is not enabled. Please enable it in settings.');
+        return;
+    }
+
+    vscode.window.showInformationMessage('Testing Synergy PSA connection...');
+
+    try {
+        const result = await synergyService.testConnection();
+
+        if (result.success) {
+            vscode.window.showInformationMessage(result.message);
+        } else {
+            vscode.window.showErrorMessage(result.message);
+        }
+    } catch (error) {
+        vscode.window.showErrorMessage(`Connection test failed: ${error}`);
     }
 }
 
