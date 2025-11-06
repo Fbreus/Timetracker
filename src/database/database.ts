@@ -211,17 +211,61 @@ export class TimeTrackerDatabase {
                 return; // Table doesn't exist yet, skip migrations
             }
 
-            // Check if customer_id column exists in time_entries
-            const tableInfo = this.db.exec("PRAGMA table_info(time_entries)");
-            if (tableInfo.length > 0) {
-                const columns = tableInfo[0].values.map(row => row[1] as string);
+            console.log('Checking for database migrations...');
 
-                // Add customer_id if it doesn't exist
-                if (!columns.includes('customer_id')) {
-                    console.log('Migrating database: Adding customer_id column to time_entries');
-                    this.db.run('ALTER TABLE time_entries ADD COLUMN customer_id INTEGER');
-                    console.log('Migration completed successfully');
+            // Get current columns in time_entries
+            const tableInfo = this.db.exec("PRAGMA table_info(time_entries)");
+            if (tableInfo.length === 0) {
+                return;
+            }
+
+            const existingColumns = tableInfo[0].values.map(row => row[1] as string);
+
+            // Define all v2.0 columns that should exist
+            const requiredColumns = [
+                { name: 'customer_id', type: 'INTEGER' },
+                { name: 'synergy_synced', type: 'BOOLEAN DEFAULT 0' },
+                { name: 'synergy_sync_date', type: 'DATETIME' },
+                { name: 'synergy_id', type: 'TEXT' },
+                { name: 'synergy_submitted', type: 'BOOLEAN DEFAULT 0' },
+                { name: 'synergy_submission_date', type: 'DATETIME' },
+                { name: 'synergy_customer_id', type: 'TEXT' },
+                { name: 'synergy_project_no', type: 'TEXT' },
+                { name: 'synergy_response', type: 'TEXT' }
+            ];
+
+            // Add missing columns
+            let migrationsRun = 0;
+            for (const column of requiredColumns) {
+                if (!existingColumns.includes(column.name)) {
+                    console.log(`Migration: Adding ${column.name} column to time_entries`);
+                    this.db.run(`ALTER TABLE time_entries ADD COLUMN ${column.name} ${column.type}`);
+                    migrationsRun++;
                 }
+            }
+
+            // Check and create customers table if it doesn't exist
+            const customerTable = this.db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='customers'");
+            if (customerTable.length === 0 || customerTable[0].values.length === 0) {
+                console.log('Migration: Creating customers table');
+                this.db.run(`
+                    CREATE TABLE customers (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        account_id TEXT NOT NULL UNIQUE,
+                        account_name TEXT NOT NULL,
+                        res_id INTEGER,
+                        last_synced_at DATETIME,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+                migrationsRun++;
+            }
+
+            if (migrationsRun > 0) {
+                console.log(`Migration completed: ${migrationsRun} changes applied`);
+            } else {
+                console.log('Database is up to date');
             }
         } catch (error) {
             console.error('Migration error:', error);
