@@ -33,6 +33,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken
     ) {
+        console.log('resolveWebviewView called - webview is being resolved');
         this._view = webviewView;
 
         webviewView.webview.options = {
