@@ -33,7 +33,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken
     ) {
-        console.log('resolveWebviewView called - webview is being resolved');
+        console.log('=== resolveWebviewView CALLED ===');
+        console.log('Webview view being resolved for timetracker.sidebar');
+        console.log('Initialized state:', this.initialized);
         this._view = webviewView;
 
         webviewView.webview.options = {
@@ -41,7 +43,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             localResourceRoots: [this._extensionUri]
         };
 
+        console.log('Setting webview HTML content...');
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+        console.log('Webview HTML content set successfully');
 
         // Handle messages from the webview
         webviewView.webview.onDidReceiveMessage(async (data) => {

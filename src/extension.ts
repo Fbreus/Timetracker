@@ -17,10 +17,13 @@ export function activate(context: vscode.ExtensionContext) {
     // Register sidebar provider immediately (synchronously)
     // This prevents "no data provider" error
     sidebarProvider = new SidebarProvider(context.extensionUri);
-    context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider('timetracker.sidebar', sidebarProvider)
-    );
-    console.log('Sidebar provider registered');
+    const registration = vscode.window.registerWebviewViewProvider('timetracker.sidebar', sidebarProvider, {
+        webviewOptions: {
+            retainContextWhenHidden: true
+        }
+    });
+    context.subscriptions.push(registration);
+    console.log('Sidebar provider registered with ID: timetracker.sidebar');
 
     // Initialize asynchronously
     initializeExtension(context).catch(error => {
