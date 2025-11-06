@@ -21,6 +21,11 @@ export interface TimeEntry {
     is_manual: boolean;
     notes?: string;
     is_billable: boolean;
+    synergy_submitted?: boolean;
+    synergy_submission_date?: string;
+    synergy_customer_id?: string;
+    synergy_project_no?: string;
+    synergy_response?: string;
     created_at?: string;
     updated_at?: string;
 }
@@ -65,6 +70,11 @@ CREATE TABLE IF NOT EXISTS time_entries (
     is_manual BOOLEAN DEFAULT 0,
     notes TEXT,
     is_billable BOOLEAN DEFAULT 0,
+    synergy_submitted BOOLEAN DEFAULT 0,
+    synergy_submission_date DATETIME,
+    synergy_customer_id TEXT,
+    synergy_project_no TEXT,
+    synergy_response TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -394,6 +404,26 @@ export class TimeTrackerDatabase {
             fields.push('is_billable = ?');
             values.push(updates.is_billable ? 1 : 0);
         }
+        if (updates.synergy_submitted !== undefined) {
+            fields.push('synergy_submitted = ?');
+            values.push(updates.synergy_submitted ? 1 : 0);
+        }
+        if (updates.synergy_submission_date !== undefined) {
+            fields.push('synergy_submission_date = ?');
+            values.push(updates.synergy_submission_date);
+        }
+        if (updates.synergy_customer_id !== undefined) {
+            fields.push('synergy_customer_id = ?');
+            values.push(updates.synergy_customer_id);
+        }
+        if (updates.synergy_project_no !== undefined) {
+            fields.push('synergy_project_no = ?');
+            values.push(updates.synergy_project_no);
+        }
+        if (updates.synergy_response !== undefined) {
+            fields.push('synergy_response = ?');
+            values.push(updates.synergy_response);
+        }
 
         if (fields.length > 0) {
             fields.push('updated_at = CURRENT_TIMESTAMP');
@@ -595,6 +625,42 @@ export class TimeTrackerDatabase {
         return result[0].values[0][0] as string;
     }
 
+    // Synergy-specific queries
+    getUnsubmittedTimeEntries(): TimeEntry[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT * FROM time_entries WHERE synergy_submitted = 0 AND end_time IS NOT NULL AND duration IS NOT NULL ORDER BY start_time DESC'
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToTimeEntry(result[0].columns, row));
+    }
+
+    markSynergySubmitted(entryId: number, customerId: string, projectNo: string, response?: string): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run(
+            `UPDATE time_entries SET
+                synergy_submitted = 1,
+                synergy_submission_date = CURRENT_TIMESTAMP,
+                synergy_customer_id = ?,
+                synergy_project_no = ?,
+                synergy_response = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?`,
+            [customerId, projectNo, response || null, entryId]
+        );
+        this.saveToFile();
+    }
+
     // Data cleanup
     cleanupOldData(retentionDays: number): void {
         if (!this.db) {
@@ -648,6 +714,7 @@ export class TimeTrackerDatabase {
 
         obj.is_manual = Boolean(obj.is_manual);
         obj.is_billable = Boolean(obj.is_billable);
+        obj.synergy_submitted = Boolean(obj.synergy_submitted);
 
         return obj as TimeEntry;
     }

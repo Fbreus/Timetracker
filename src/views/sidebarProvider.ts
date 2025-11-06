@@ -79,6 +79,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 case 'export':
                     await vscode.commands.executeCommand('timetracker.exportData');
                     break;
+                case 'submitSynergy':
+                    await vscode.commands.executeCommand('timetracker.submitToSynergy');
+                    break;
                 case 'refresh':
                     this.refresh();
                     break;
@@ -361,6 +364,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 <a class="action-link" onclick="showDashboard()">Dashboard</a>
                 <a class="action-link" onclick="addManualEntry()">Manual Entry</a>
                 <a class="action-link" onclick="exportData()">Export</a>
+                <a class="action-link" onclick="submitToSynergy()">Submit to Synergy</a>
             </div>
         </div>
     </div>
@@ -515,6 +519,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         function viewTimeEntries() {
             vscode.postMessage({ type: 'viewEntries' });
+        }
+
+        function submitToSynergy() {
+            vscode.postMessage({ type: 'submitSynergy' });
         }
 
         // Request initial data

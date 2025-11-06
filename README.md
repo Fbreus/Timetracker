@@ -22,6 +22,7 @@ A comprehensive, automatic time tracking extension for Visual Studio Code that m
 - **Edit/Delete**: Modify or remove time entries
 - **Multiple Export Formats**: Export data as CSV (detailed or summary), JSON, or text reports
 - **Date Range Filtering**: Export data for specific time periods
+- **Synergy PSA Integration**: Submit time entries directly to Synergy PSA system (see [SYNERGY_INTEGRATION.md](SYNERGY_INTEGRATION.md))
 
 ### Analytics & Reports
 - **Daily Summaries**: See how much time spent on each project today
@@ -78,6 +79,8 @@ Access these commands via the Command Palette (Ctrl+Shift+P / Cmd+Shift+P):
 - `Time Tracker: Add Manual Entry` - Add a time entry manually
 - `Time Tracker: Export Data` - Export your time tracking data
 - `Time Tracker: Open Settings` - Open Time Tracker settings
+- `Time Tracker: Submit to Synergy PSA` - Submit time entries to Synergy PSA
+- `Time Tracker: Test Synergy Connection` - Test connection to Synergy API
 
 ### Sidebar
 
@@ -129,6 +132,11 @@ Go to Settings (File > Preferences > Settings) and search for "Time Tracker":
 | `timetracker.workingHoursStart` | string | "09:00" | Working hours start time (HH:MM) |
 | `timetracker.workingHoursEnd` | string | "17:00" | Working hours end time (HH:MM) |
 | `timetracker.dataRetentionDays` | number | 365 | Number of days to retain data (0 = forever) |
+| `timetracker.synergy.enabled` | boolean | false | Enable Synergy PSA integration |
+| `timetracker.synergy.resourceId` | number | - | Your Synergy resource/employee ID |
+| `timetracker.synergy.autoSubmit` | boolean | false | Auto-submit when stopping tracking |
+
+For complete Synergy configuration options, see [SYNERGY_INTEGRATION.md](SYNERGY_INTEGRATION.md)
 
 ### Example Configuration
 
@@ -159,10 +167,19 @@ All data is stored locally on your machine:
 The extension uses SQLite with the following tables:
 
 - **projects**: Project information (name, path, category, tags)
-- **time_entries**: Individual time tracking sessions
+- **time_entries**: Individual time tracking sessions (includes Synergy submission tracking)
 - **activity_log**: Detailed activity events (start, pause, resume, stop, idle)
 - **daily_summaries**: Pre-aggregated daily statistics
 - **settings**: Extension settings storage
+
+### Synergy PSA Fields
+
+The `time_entries` table includes fields for Synergy PSA integration:
+- `synergy_submitted`: Whether entry has been submitted to Synergy
+- `synergy_submission_date`: Timestamp of submission
+- `synergy_customer_id`: Customer ID used
+- `synergy_project_no`: Project number used
+- `synergy_response`: API response data
 
 ## Development
 
@@ -197,11 +214,13 @@ npx vsce package
 vscode-time-tracker/
 ├── src/
 │   ├── database/           # Database layer
-│   │   ├── schema.sql      # Database schema
 │   │   └── database.ts     # Database operations
 │   ├── tracking/           # Time tracking logic
 │   │   ├── activityDetector.ts
 │   │   └── timeTracker.ts
+│   ├── services/           # External integrations
+│   │   ├── synergyService.ts
+│   │   └── synergyTypes.ts
 │   ├── views/              # UI components
 │   │   └── sidebarProvider.ts
 │   ├── utils/              # Utility functions
@@ -211,7 +230,8 @@ vscode-time-tracker/
 ├── resources/              # Icons and assets
 ├── package.json            # Extension manifest
 ├── tsconfig.json          # TypeScript configuration
-└── README.md              # This file
+├── README.md              # This file
+└── SYNERGY_INTEGRATION.md # Synergy PSA integration guide
 ```
 
 ## Troubleshooting
@@ -244,11 +264,14 @@ vscode-time-tracker/
 
 ## Roadmap
 
+Completed features:
+- [x] Synergy PSA integration for time entry submission
+- [x] Billable vs non-billable hour tracking
+
 Future enhancements may include:
 
-- [ ] Integration with project management tools (Jira, Trello, Asana)
+- [ ] Integration with other project management tools (Jira, Trello, Asana)
 - [ ] Team time tracking capabilities
-- [ ] Billable vs non-billable hour tracking
 - [ ] Client assignment per project
 - [ ] Invoice generation
 - [ ] Browser extension for non-VS Code work
