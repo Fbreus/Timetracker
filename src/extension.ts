@@ -9,6 +9,7 @@ import { SynergyAuthService } from './services/synergyAuth';
 import { SynergySyncService } from './services/synergySync';
 import { SynergyService } from './services/synergyService';
 import { SynergyIntegration } from './services/synergyIntegration';
+import { SynergyApiService } from './services/synergyApiService';
 
 let db: TimeTrackerDatabase;
 let timeTracker: TimeTracker;
@@ -18,6 +19,7 @@ let synergyAuth: SynergyAuthService;
 let synergySync: SynergySyncService;
 let synergyService: SynergyService;
 let synergyIntegration: SynergyIntegration;
+let synergyApi: SynergyApiService;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Time Tracker extension is activating...');
@@ -69,6 +71,17 @@ async function initializeExtension(context: vscode.ExtensionContext) {
         synergySync = new SynergySyncService(db, synergyAuth);
         synergyService = new SynergyService();
         synergyIntegration = new SynergyIntegration(db);
+        synergyApi = new SynergyApiService();
+
+        // Configure Synergy API from settings
+        const synergyTokenEndpoint = config.get<string>('synergy.tokenEndpoint');
+        const synergyCustomerEndpoint = config.get<string>('synergy.customerEndpoint');
+        if (synergyTokenEndpoint && synergyCustomerEndpoint) {
+            synergyApi.updateConfig({
+                tokenEndpoint: synergyTokenEndpoint,
+                customerEndpoint: synergyCustomerEndpoint
+            });
+        }
         console.log('Synergy services initialized successfully');
 
         // Set dependencies on sidebar provider
@@ -183,6 +196,13 @@ async function initializeExtension(context: vscode.ExtensionContext) {
         context.subscriptions.push(
             vscode.commands.registerCommand('timetracker.selectSynergyProject', async () => {
                 await selectSynergyProject();
+            })
+        );
+
+        // Synergy commands - Customer sync
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.syncCustomers', async () => {
+                await syncCustomersFromSynergy();
             })
         );
 
@@ -1296,6 +1316,80 @@ async function syncSynergyProjects(): Promise<void> {
         }
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to sync Synergy projects: ${error}`);
+    }
+}
+
+async function syncCustomersFromSynergy(): Promise<void> {
+    try {
+        // Get ResID from configuration
+        const config = vscode.workspace.getConfiguration('timetracker');
+        const resId = config.get<number>('synergy.resId');
+
+        if (!resId) {
+            const input = await vscode.window.showInputBox({
+                prompt: 'Enter Synergy Resource ID (ResID)',
+                placeHolder: 'e.g., 12345',
+                validateInput: (value) => {
+                    const num = parseInt(value);
+                    return isNaN(num) ? 'Please enter a valid number' : null;
+                }
+            });
+
+            if (!input) {
+                return; // User cancelled
+            }
+
+            const inputResId = parseInt(input);
+
+            // Ask if they want to save it
+            const saveConfig = await vscode.window.showQuickPick(['Yes', 'No'], {
+                placeHolder: 'Save this ResID to settings for future use?'
+            });
+
+            if (saveConfig === 'Yes') {
+                await config.update('synergy.resId', inputResId, vscode.ConfigurationTarget.Global);
+            }
+
+            // Fetch customers with the provided ResID
+            await fetchAndStoreCustomers(inputResId);
+        } else {
+            // Use saved ResID
+            await fetchAndStoreCustomers(resId);
+        }
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to sync customers: ${error instanceof Error ? error.message : String(error)}`);
+    }
+}
+
+async function fetchAndStoreCustomers(resId: number): Promise<void> {
+    try {
+        vscode.window.showInformationMessage('Syncing customers from Synergy...');
+
+        // Fetch customers from Synergy API
+        const customers = await synergyApi.getCustomers(resId);
+
+        if (customers.length === 0) {
+            vscode.window.showWarningMessage('No customers found for the given ResID');
+            return;
+        }
+
+        // Transform and store in database
+        const syncedCount = db.syncCustomers(
+            customers.map(c => ({
+                account_id: c.AccountID,
+                account_name: c.AccountName
+            })),
+            resId
+        );
+
+        vscode.window.showInformationMessage(`Successfully synced ${syncedCount} customers from Synergy`);
+
+        // Refresh sidebar to show updated customer list
+        if (sidebarProvider) {
+            sidebarProvider.refresh();
+        }
+    } catch (error) {
+        throw error; // Let the caller handle the error
     }
 }
 
