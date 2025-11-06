@@ -5,11 +5,13 @@ import { TimeTracker, TrackingState } from './tracking/timeTracker';
 import { SidebarProvider } from './views/sidebarProvider';
 import { DataExporter } from './utils/exporter';
 import { parseTimeString } from './utils/formatters';
+import { SynergyIntegration } from './services/synergyIntegration';
 
 let db: TimeTrackerDatabase;
 let timeTracker: TimeTracker;
 let sidebarProvider: SidebarProvider;
 let exporter: DataExporter;
+let synergyIntegration: SynergyIntegration;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Time Tracker extension is activating...');
@@ -54,6 +56,11 @@ async function initializeExtension(context: vscode.ExtensionContext) {
         console.log('Initializing exporter...');
         exporter = new DataExporter(db);
         console.log('Exporter initialized successfully');
+
+        // Initialize Synergy integration
+        console.log('Initializing Synergy integration...');
+        synergyIntegration = new SynergyIntegration(db);
+        console.log('Synergy integration initialized successfully');
 
         // Set dependencies on sidebar provider
         console.log('Setting sidebar provider dependencies...');
@@ -125,6 +132,18 @@ async function initializeExtension(context: vscode.ExtensionContext) {
             })
         );
 
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.syncSynergyProjects', async () => {
+                await syncSynergyProjects();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.selectSynergyProject', async () => {
+                await selectSynergyProject();
+            })
+        );
+
         console.log('Commands registered successfully');
 
         // Listen for configuration changes
@@ -133,6 +152,10 @@ async function initializeExtension(context: vscode.ExtensionContext) {
                 if (e.affectsConfiguration('timetracker.idleTimeout')) {
                     const newTimeout = vscode.workspace.getConfiguration('timetracker').get<number>('idleTimeout', 5);
                     timeTracker.setIdleTimeout(newTimeout);
+                }
+                if (e.affectsConfiguration('timetracker.synergy')) {
+                    // Refresh Synergy integration when config changes
+                    synergyIntegration.refreshConfig();
                 }
             })
         );
@@ -969,6 +992,74 @@ function getTimeEntriesHtml(): string {
     </script>
 </body>
 </html>`;
+}
+
+async function syncSynergyProjects(): Promise<void> {
+    if (!synergyIntegration.isEnabled()) {
+        vscode.window.showWarningMessage(
+            'Synergy integration is not enabled. Please configure it in settings.',
+            'Open Settings'
+        ).then(selection => {
+            if (selection === 'Open Settings') {
+                vscode.commands.executeCommand('workbench.action.openSettings', 'timetracker.synergy');
+            }
+        });
+        return;
+    }
+
+    try {
+        vscode.window.showInformationMessage('Syncing projects from Synergy...');
+        const syncedCount = await synergyIntegration.syncProjects();
+
+        vscode.window.showInformationMessage(
+            `Successfully synced ${syncedCount} new projects from Synergy`
+        );
+
+        // Refresh sidebar
+        if (sidebarProvider) {
+            sidebarProvider.refresh();
+        }
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to sync Synergy projects: ${error}`);
+    }
+}
+
+async function selectSynergyProject(): Promise<void> {
+    if (!synergyIntegration.isEnabled()) {
+        vscode.window.showWarningMessage(
+            'Synergy integration is not enabled. Please configure it in settings.',
+            'Open Settings'
+        ).then(selection => {
+            if (selection === 'Open Settings') {
+                vscode.commands.executeCommand('workbench.action.openSettings', 'timetracker.synergy');
+            }
+        });
+        return;
+    }
+
+    try {
+        const project = await synergyIntegration.selectAndTrackSynergyProject();
+
+        if (!project) {
+            return; // User cancelled
+        }
+
+        // Stop current tracking if any
+        if (timeTracker.getTrackingState() !== TrackingState.STOPPED) {
+            await timeTracker.stopTracking();
+        }
+
+        // Start tracking the selected Synergy project
+        await timeTracker.startTrackingProject(project.path, project.name);
+        vscode.window.showInformationMessage(`Started tracking: ${project.name}`);
+
+        // Refresh sidebar
+        if (sidebarProvider) {
+            sidebarProvider.refresh();
+        }
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to select Synergy project: ${error}`);
+    }
 }
 
 export function deactivate() {

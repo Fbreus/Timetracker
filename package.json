@@ -65,6 +65,14 @@
       {
         "command": "timetracker.viewTimeEntries",
         "title": "Time Tracker: View Time Entries"
+      },
+      {
+        "command": "timetracker.syncSynergyProjects",
+        "title": "Time Tracker: Sync Synergy Projects"
+      },
+      {
+        "command": "timetracker.selectSynergyProject",
+        "title": "Time Tracker: Select Synergy Project"
       }
     ],
     "viewsContainers": {
@@ -122,6 +130,31 @@
           "type": "number",
           "default": 365,
           "description": "Number of days to retain data (0 = forever)"
+        },
+        "timetracker.synergy.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Synergy project integration via Power Automate"
+        },
+        "timetracker.synergy.email": {
+          "type": "string",
+          "default": "",
+          "description": "User email address for fetching Synergy ResID"
+        },
+        "timetracker.synergy.employeeId": {
+          "type": "string",
+          "default": "",
+          "description": "Employee ID (ResID) for fetching Synergy projects (optional if email is provided)"
+        },
+        "timetracker.synergy.projectsEndpointUrl": {
+          "type": "string",
+          "default": "https://default8e426d61a69d49278a3fef2f62da7f.57.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/22875bb4fbe842878aa259258da3282e/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=AstmvDgfeuxKoNh5UUeRpqScE6wvhwBE17W6tGDucWs",
+          "description": "Power Automate endpoint URL for fetching Synergy projects"
+        },
+        "timetracker.synergy.resIdEndpointUrl": {
+          "type": "string",
+          "default": "https://default8e426d61a69d49278a3fef2f62da7f.57.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/2a6aeb0a4dd04785a7e49d8a03702975/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=dvAvMPws4G4Dm846yzL8Akkp0GboBOlsifL19VT6s7w",
+          "description": "Power Automate endpoint URL for fetching ResID from email"
         }
       }
     }
@@ -144,6 +177,7 @@
     "typescript": "^4.7.4"
   },
   "dependencies": {
+    "axios": "^1.13.2",
     "chart.js": "^4.3.0",
     "sql.js": "^1.13.0"
   }
