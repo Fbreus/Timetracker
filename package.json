@@ -2,7 +2,7 @@
   "name": "vscode-time-tracker",
   "displayName": "Time Tracker",
   "description": "Automatic time tracking for VS Code projects with comprehensive Synergy PSA integration",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "publisher": "timetracker",
   "license": "MIT",
   "repository": {
@@ -228,7 +228,7 @@
         "timetracker.synergy.password": {
           "type": "string",
           "default": "",
-          "description": "Synergy API password (stored securely, for direct API access)"
+          "description": "Synergy API password (for direct API access). WARNING: Stored in VS Code settings - consider using Azure Logic Apps authentication instead for better security."
         },
         "timetracker.synergy.autoSync": {
           "type": "boolean",

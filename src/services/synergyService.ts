@@ -67,19 +67,34 @@ export class SynergyService {
         }
 
         try {
-            const response = await this.makeHttpRequest<SynergyTokenResponse>(
+            const response = await this.makeHttpRequest<any>(
                 this.config.tokenEndpoint,
                 'GET'
             );
 
-            if (response.body) {
-                this.cachedToken = response.body;
-                // Token expires in 1 hour (assuming standard token expiry)
-                this.tokenExpiry = new Date(Date.now() + 60 * 60 * 1000);
-                return response.body;
+            // Handle both JSON response and plain string token
+            let token: string;
+            if (typeof response === 'string') {
+                // Plain token string (e.g., "Bearer eyJhbGciOi...")
+                token = response.trim();
+                // Remove "Bearer " prefix if present
+                if (token.startsWith('Bearer ')) {
+                    token = token.substring(7);
+                }
+            } else if (response.body && typeof response.body === 'string') {
+                // Token in body field
+                token = response.body.trim();
+                if (token.startsWith('Bearer ')) {
+                    token = token.substring(7);
+                }
+            } else {
+                throw new Error('Unexpected token response format');
             }
 
-            throw new Error('Failed to get access token: No token in response');
+            this.cachedToken = token;
+            // Token expires in 1 hour (assuming standard token expiry)
+            this.tokenExpiry = new Date(Date.now() + 60 * 60 * 1000);
+            return token;
         } catch (error) {
             throw new Error(`Failed to get Synergy access token: ${error}`);
         }
@@ -309,8 +324,19 @@ export class SynergyService {
                 res.on('end', () => {
                     try {
                         if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-                            const parsed = data ? JSON.parse(data) : {};
-                            resolve(parsed as T);
+                            // Try to parse as JSON, but fall back to raw string for plain text responses
+                            let result: any;
+                            if (data) {
+                                try {
+                                    result = JSON.parse(data);
+                                } catch (parseError) {
+                                    // If JSON parsing fails, return the raw string (e.g., plain JWT token)
+                                    result = data;
+                                }
+                            } else {
+                                result = {};
+                            }
+                            resolve(result as T);
                         } else {
                             const error: any = new Error(`HTTP ${res.statusCode}: ${data}`);
                             error.statusCode = res.statusCode;

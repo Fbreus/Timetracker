@@ -69,14 +69,22 @@ export class SynergyAuthService {
         }
 
         try {
-            // Build the authentication URL with query parameters
-            const authUrl = `${this.config.apiUrl}/Token?username=${encodeURIComponent(this.config.username)}&password=${encodeURIComponent(this.config.password)}`;
+            // Build the authentication URL (without credentials in query string for security)
+            const authUrl = `${this.config.apiUrl}/Token`;
+
+            // Send credentials in POST body using form-urlencoded format (standard for OAuth2)
+            const body = new URLSearchParams({
+                username: this.config.username,
+                password: this.config.password,
+                grant_type: 'password'
+            });
 
             const response = await fetch(authUrl, {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/json'
-                }
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: body.toString()
             });
 
             if (!response.ok) {
