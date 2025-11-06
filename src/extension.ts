@@ -1155,6 +1155,22 @@ async function submitToSynergy(): Promise<void> {
         return;
     }
 
+    // Check if resource ID is configured
+    const config = vscode.workspace.getConfiguration('timetracker.synergy');
+    const resourceId = config.get<number>('resourceId');
+    if (!resourceId) {
+        const configure = await vscode.window.showWarningMessage(
+            'Resource ID is not configured. This is required to submit time entries to Synergy.',
+            'Open Settings',
+            'Cancel'
+        );
+
+        if (configure === 'Open Settings') {
+            await vscode.commands.executeCommand('workbench.action.openSettings', 'timetracker.synergy.resourceId');
+        }
+        return;
+    }
+
     // Get unsubmitted entries
     const unsubmittedEntries = db.getUnsubmittedTimeEntries();
 

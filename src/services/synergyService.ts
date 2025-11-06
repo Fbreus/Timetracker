@@ -102,21 +102,12 @@ export class SynergyService {
 
     /**
      * Check if winter hour adjustment is needed
+     * Note: Simplified to always return true (UTC+1) since the endpoint is unreliable
      */
     public async checkWinterHour(date: Date): Promise<boolean> {
-        try {
-            const response = await this.makeHttpRequest<WinterHourCheckResponse>(
-                this.config.winterHourCheckEndpoint,
-                'POST',
-                { Date: date.toISOString() }
-            );
-
-            return response.IsWinterHour === 'True';
-        } catch (error) {
-            console.error('Failed to check winter hour:', error);
-            // Default to winter hour (UTC+1) if check fails
-            return true;
-        }
+        // Always use UTC+1 timezone adjustment
+        // The winter hour endpoint is disabled to avoid 502 errors
+        return true;
     }
 
     /**
@@ -219,7 +210,7 @@ export class SynergyService {
             if (!resourceId) {
                 return {
                     success: false,
-                    error: 'Resource ID is not configured'
+                    error: 'Resource ID is not configured. Please set "timetracker.synergy.resourceId" in your VS Code settings to your Synergy employee/resource ID number.'
                 };
             }
 
