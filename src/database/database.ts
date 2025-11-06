@@ -187,11 +187,35 @@ export class TimeTrackerDatabase {
         // Execute schema
         this.db.run(DATABASE_SCHEMA);
 
+        // Run migrations for existing databases
+        this.runMigrations();
+
         // Enable foreign keys
         this.db.run('PRAGMA foreign_keys = ON');
 
         this.initialized = true;
         this.saveToFile();
+    }
+
+    private runMigrations(): void {
+        if (!this.db) {
+            return;
+        }
+
+        // Check if customer_id column exists in time_entries
+        const tableInfo = this.db.exec("PRAGMA table_info(time_entries)");
+        if (tableInfo.length > 0) {
+            const columns = tableInfo[0].values.map(row => row[1] as string);
+
+            // Add customer_id if it doesn't exist
+            if (!columns.includes('customer_id')) {
+                try {
+                    this.db.run('ALTER TABLE time_entries ADD COLUMN customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL');
+                } catch (e) {
+                    // Column might already exist from another migration attempt
+                }
+            }
+        }
     }
 
     private saveToFile(): void {
