@@ -176,19 +176,21 @@ export class TimeTrackerDatabase {
 
         const SQL = await initSqlJs();
 
+        const isExistingDb = fs.existsSync(this.dbPath);
+
         // Try to load existing database
-        if (fs.existsSync(this.dbPath)) {
+        if (isExistingDb) {
             const buffer = fs.readFileSync(this.dbPath);
             this.db = new SQL.Database(new Uint8Array(buffer));
+
+            // Run migrations FIRST for existing databases (before applying full schema)
+            this.runMigrations();
         } else {
             this.db = new SQL.Database();
         }
 
-        // Execute schema
+        // Execute schema (safe now because migrations already ran)
         this.db.run(DATABASE_SCHEMA);
-
-        // Run migrations for existing databases
-        this.runMigrations();
 
         // Enable foreign keys
         this.db.run('PRAGMA foreign_keys = ON');
@@ -202,19 +204,28 @@ export class TimeTrackerDatabase {
             return;
         }
 
-        // Check if customer_id column exists in time_entries
-        const tableInfo = this.db.exec("PRAGMA table_info(time_entries)");
-        if (tableInfo.length > 0) {
-            const columns = tableInfo[0].values.map(row => row[1] as string);
+        try {
+            // Check if time_entries table exists
+            const tables = this.db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='time_entries'");
+            if (tables.length === 0 || tables[0].values.length === 0) {
+                return; // Table doesn't exist yet, skip migrations
+            }
 
-            // Add customer_id if it doesn't exist
-            if (!columns.includes('customer_id')) {
-                try {
-                    this.db.run('ALTER TABLE time_entries ADD COLUMN customer_id INTEGER REFERENCES customers(id) ON DELETE SET NULL');
-                } catch (e) {
-                    // Column might already exist from another migration attempt
+            // Check if customer_id column exists in time_entries
+            const tableInfo = this.db.exec("PRAGMA table_info(time_entries)");
+            if (tableInfo.length > 0) {
+                const columns = tableInfo[0].values.map(row => row[1] as string);
+
+                // Add customer_id if it doesn't exist
+                if (!columns.includes('customer_id')) {
+                    console.log('Migrating database: Adding customer_id column to time_entries');
+                    this.db.run('ALTER TABLE time_entries ADD COLUMN customer_id INTEGER');
+                    console.log('Migration completed successfully');
                 }
             }
+        } catch (error) {
+            console.error('Migration error:', error);
+            // Don't throw - allow initialization to continue
         }
     }
 
