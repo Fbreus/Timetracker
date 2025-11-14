@@ -4,7 +4,7 @@ import { TimeTrackerDatabase } from './database/database';
 import { TimeTracker, TrackingState } from './tracking/timeTracker';
 import { SidebarProvider } from './views/sidebarProvider';
 import { DataExporter } from './utils/exporter';
-import { parseTimeString } from './utils/formatters';
+import { parseTimeString, parseDurationString } from './utils/formatters';
 import { SynergyAuthService } from './services/synergyAuth';
 import { SynergySyncService } from './services/synergySync';
 import { SynergyService } from './services/synergyService';
@@ -202,6 +202,12 @@ async function initializeExtension(context: vscode.ExtensionContext) {
             })
         );
 
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.addManualEntry', async () => {
+                await addManualEntry();
+            })
+        );
+
         // Synergy commands - Direct API sync
         context.subscriptions.push(
             vscode.commands.registerCommand('timetracker.synergy.testConnection', async () => {
@@ -386,107 +392,6 @@ async function startTracking(): Promise<void> {
         vscode.window.showInformationMessage(`Started tracking: ${projectName}`);
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to start tracking: ${error}`);
-    }
-}
-
-async function addManualEntry(): Promise<void> {
-    // Get project
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
-        vscode.window.showWarningMessage('No workspace folder open');
-        return;
-    }
-
-    const folder = workspaceFolders[0];
-    const projectPath = folder.uri.fsPath;
-    const projectName = folder.name;
-
-    // Get date
-    const dateStr = await vscode.window.showInputBox({
-        prompt: 'Enter date (YYYY-MM-DD) or leave empty for today',
-        placeHolder: new Date().toISOString().split('T')[0]
-    });
-
-    if (dateStr === undefined) {
-        return; // User cancelled
-    }
-
-    const date = dateStr ? new Date(dateStr) : new Date();
-
-    // Get start time
-    const startTimeStr = await vscode.window.showInputBox({
-        prompt: 'Enter start time (HH:MM or HH:MM AM/PM)',
-        placeHolder: '09:00'
-    });
-
-    if (!startTimeStr) {
-        return;
-    }
-
-    const startTime = parseTimeString(startTimeStr);
-    if (!startTime) {
-        vscode.window.showErrorMessage('Invalid start time format');
-        return;
-    }
-
-    startTime.setFullYear(date.getFullYear(), date.getMonth(), date.getDate());
-
-    // Get end time
-    const endTimeStr = await vscode.window.showInputBox({
-        prompt: 'Enter end time (HH:MM or HH:MM AM/PM)',
-        placeHolder: '17:00'
-    });
-
-    if (!endTimeStr) {
-        return;
-    }
-
-    const endTime = parseTimeString(endTimeStr);
-    if (!endTime) {
-        vscode.window.showErrorMessage('Invalid end time format');
-        return;
-    }
-
-    endTime.setFullYear(date.getFullYear(), date.getMonth(), date.getDate());
-
-    // Validate times
-    if (endTime <= startTime) {
-        vscode.window.showErrorMessage('End time must be after start time');
-        return;
-    }
-
-    // Get notes
-    const notes = await vscode.window.showInputBox({
-        prompt: 'Enter notes (optional)',
-        placeHolder: 'What did you work on?'
-    });
-
-    // Get billable status
-    const isBillable = await vscode.window.showQuickPick(['No', 'Yes'], {
-        placeHolder: 'Is this time billable?'
-    });
-
-    if (isBillable === undefined) {
-        return;
-    }
-
-    try {
-        await timeTracker.addManualEntry(
-            projectPath,
-            projectName,
-            startTime,
-            endTime,
-            notes,
-            isBillable === 'Yes'
-        );
-
-        const duration = Math.floor((endTime.getTime() - startTime.getTime()) / 1000 / 60);
-        vscode.window.showInformationMessage(`Added ${duration} minutes to ${projectName}`);
-
-        // Refresh sidebar
-        sidebarProvider.refresh();
-    } catch (error) {
-        vscode.window.showErrorMessage(`Failed to add manual entry: ${error}`);
     }
 }
 
@@ -957,6 +862,178 @@ function sendTimeEntriesData(panel: vscode.WebviewPanel): void {
         })),
         synergyProjects: synergyProjects
     });
+}
+
+async function addManualEntry(): Promise<void> {
+    try {
+        // Step 1: Select project
+        const allProjects = db.getAllProjects();
+        if (allProjects.length === 0) {
+            vscode.window.showWarningMessage('No projects found. Please start tracking a project first.');
+            return;
+        }
+
+        const projectItems = allProjects.map(p => ({
+            label: p.name,
+            description: p.path,
+            project: p
+        }));
+
+        const selectedProject = await vscode.window.showQuickPick(projectItems, {
+            placeHolder: 'Select a project for this entry',
+            matchOnDescription: true
+        });
+
+        if (!selectedProject) {
+            return; // User cancelled
+        }
+
+        // Step 2: Select date
+        const dateInput = await vscode.window.showInputBox({
+            prompt: 'Enter date (YYYY-MM-DD)',
+            placeHolder: new Date().toISOString().split('T')[0],
+            value: new Date().toISOString().split('T')[0],
+            validateInput: (value) => {
+                const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+                if (!dateRegex.test(value)) {
+                    return 'Please enter a valid date in YYYY-MM-DD format';
+                }
+                return null;
+            }
+        });
+
+        if (!dateInput) {
+            return; // User cancelled
+        }
+
+        // Step 3: Select start time
+        const startTimeInput = await vscode.window.showInputBox({
+            prompt: 'Enter start time (HH:MM)',
+            placeHolder: '09:00',
+            validateInput: (value) => {
+                const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+                if (!timeRegex.test(value)) {
+                    return 'Please enter a valid time in HH:MM format (24-hour)';
+                }
+                return null;
+            }
+        });
+
+        if (!startTimeInput) {
+            return; // User cancelled
+        }
+
+        // Step 4: Select duration or end time
+        const durationChoice = await vscode.window.showQuickPick([
+            { label: 'Enter duration', value: 'duration' },
+            { label: 'Enter end time', value: 'endtime' }
+        ], {
+            placeHolder: 'How would you like to specify the time?'
+        });
+
+        if (!durationChoice) {
+            return; // User cancelled
+        }
+
+        let durationSeconds = 0;
+        let endTime = '';
+
+        if (durationChoice.value === 'duration') {
+            const durationInput = await vscode.window.showInputBox({
+                prompt: 'Enter duration (e.g., "2h 30m" or "1.5h" or "90m")',
+                placeHolder: '1h 30m',
+                validateInput: (value) => {
+                    try {
+                        parseDurationString(value);
+                        return null;
+                    } catch (e) {
+                        return 'Invalid duration format. Use formats like: 2h 30m, 1.5h, or 90m';
+                    }
+                }
+            });
+
+            if (!durationInput) {
+                return; // User cancelled
+            }
+
+            durationSeconds = parseDurationString(durationInput);
+        } else {
+            const endTimeInput = await vscode.window.showInputBox({
+                prompt: 'Enter end time (HH:MM)',
+                placeHolder: '17:30',
+                validateInput: (value) => {
+                    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+                    if (!timeRegex.test(value)) {
+                        return 'Please enter a valid time in HH:MM format (24-hour)';
+                    }
+                    return null;
+                }
+            });
+
+            if (!endTimeInput) {
+                return; // User cancelled
+            }
+
+            endTime = endTimeInput;
+
+            // Calculate duration
+            const [startHour, startMin] = startTimeInput.split(':').map(Number);
+            const [endHour, endMin] = endTimeInput.split(':').map(Number);
+            const startMinutes = startHour * 60 + startMin;
+            const endMinutes = endHour * 60 + endMin;
+            durationSeconds = (endMinutes - startMinutes) * 60;
+
+            if (durationSeconds <= 0) {
+                vscode.window.showErrorMessage('End time must be after start time');
+                return;
+            }
+        }
+
+        // Step 5: Add notes (optional)
+        const notes = await vscode.window.showInputBox({
+            prompt: 'Enter notes (optional)',
+            placeHolder: 'Description of work performed...'
+        });
+
+        // Step 6: Billable?
+        const billable = await vscode.window.showQuickPick([
+            { label: 'Billable', value: true },
+            { label: 'Non-billable', value: false }
+        ], {
+            placeHolder: 'Is this entry billable?'
+        });
+
+        if (!billable) {
+            return; // User cancelled
+        }
+
+        // Create the time entry
+        const startDateTime = new Date(`${dateInput}T${startTimeInput}:00`);
+        const endDateTime = endTime ? new Date(`${dateInput}T${endTime}:00`) : null;
+
+        db.createTimeEntry({
+            project_id: selectedProject.project.id!,
+            start_time: startDateTime.toISOString(),
+            end_time: endDateTime ? endDateTime.toISOString() : undefined,
+            duration: durationSeconds,
+            notes: notes || undefined,
+            is_billable: billable.value,
+            is_manual: true,
+            synergy_synced: false
+        });
+
+        vscode.window.showInformationMessage(
+            `✓ Manual entry added: ${selectedProject.project.name} - ${Math.floor(durationSeconds / 3600)}h ${Math.floor((durationSeconds % 3600) / 60)}m`
+        );
+
+        // Refresh sidebar if available
+        if (sidebarProvider) {
+            sidebarProvider.refresh();
+        }
+
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to create manual entry: ${error}`);
+    }
 }
 
 async function editTimeEntry(entryId: number): Promise<void> {

@@ -72,3 +72,46 @@ export function parseTimeString(timeStr: string): Date | null {
 
     return null;
 }
+
+export function parseDurationString(durationStr: string): number {
+    // Parse duration strings like "2h 30m", "1.5h", "90m", "2h", etc.
+    // Returns duration in seconds
+
+    const input = durationStr.trim().toLowerCase();
+    let totalSeconds = 0;
+
+    // Try decimal hours format first (e.g., "1.5h" or "1.5")
+    const decimalHoursMatch = input.match(/^(\d+\.?\d*)\s*h?$/);
+    if (decimalHoursMatch) {
+        const hours = parseFloat(decimalHoursMatch[1]);
+        return Math.round(hours * 3600);
+    }
+
+    // Try minutes only format (e.g., "90m" or "90")
+    const minutesMatch = input.match(/^(\d+)\s*m$/);
+    if (minutesMatch) {
+        const minutes = parseInt(minutesMatch[1], 10);
+        return minutes * 60;
+    }
+
+    // Try compound format (e.g., "2h 30m", "1h30m", "2h 30m 15s")
+    const hoursMatch = input.match(/(\d+)\s*h/);
+    const minsMatch = input.match(/(\d+)\s*m/);
+    const secsMatch = input.match(/(\d+)\s*s/);
+
+    if (hoursMatch || minsMatch || secsMatch) {
+        if (hoursMatch) {
+            totalSeconds += parseInt(hoursMatch[1], 10) * 3600;
+        }
+        if (minsMatch) {
+            totalSeconds += parseInt(minsMatch[1], 10) * 60;
+        }
+        if (secsMatch) {
+            totalSeconds += parseInt(secsMatch[1], 10);
+        }
+        return totalSeconds;
+    }
+
+    // If no format matched, throw an error
+    throw new Error('Invalid duration format. Use formats like: 2h 30m, 1.5h, or 90m');
+}
