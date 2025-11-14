@@ -10,28 +10,41 @@ import { SynergySyncService } from './services/synergySync';
 import { SynergyService } from './services/synergyService';
 import { SynergyIntegration } from './services/synergyIntegration';
 import { SynergyApiService } from './services/synergyApiService';
+import { PomodoroTimer, PomodoroPhase } from './tracking/pomodoroTimer';
+import { RecentProjectsManager } from './tracking/recentProjects';
 
 let db: TimeTrackerDatabase;
 let timeTracker: TimeTracker;
 let sidebarProvider: SidebarProvider;
 let exporter: DataExporter;
 let statusBarItem: vscode.StatusBarItem;
+let pomodoroStatusBarItem: vscode.StatusBarItem;
 let synergyAuth: SynergyAuthService;
 let synergySync: SynergySyncService;
 let synergyService: SynergyService;
 let synergyIntegration: SynergyIntegration;
 let synergyApi: SynergyApiService;
+let pomodoroTimer: PomodoroTimer;
+let recentProjectsManager: RecentProjectsManager;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Time Tracker extension is activating...');
 
-    // Create status bar item
+    // Create status bar items
     statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     statusBarItem.command = 'timetracker.showDashboard';
     statusBarItem.tooltip = 'Click to open Time Tracker Dashboard';
     context.subscriptions.push(statusBarItem);
     statusBarItem.show();
     updateStatusBar({ state: 'stopped', sessionDuration: 0, todayTotal: 0 });
+
+    // Create Pomodoro status bar item
+    pomodoroStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+    pomodoroStatusBarItem.command = 'timetracker.pomodoro.toggle';
+    pomodoroStatusBarItem.tooltip = 'Click to start Pomodoro timer';
+    context.subscriptions.push(pomodoroStatusBarItem);
+    pomodoroStatusBarItem.text = '🍅 Pomodoro';
+    pomodoroStatusBarItem.show();
 
     // Register sidebar provider immediately (synchronously)
     // This prevents "no data provider" error
@@ -73,6 +86,26 @@ async function initializeExtension(context: vscode.ExtensionContext) {
         console.log('Initializing exporter...');
         exporter = new DataExporter(db);
         console.log('Exporter initialized successfully');
+
+        // Initialize Pomodoro timer
+        console.log('Initializing Pomodoro timer...');
+        const pomodoroWorkMinutes = config.get<number>('pomodoro.workDuration', 25);
+        const pomodoroShortBreak = config.get<number>('pomodoro.shortBreakDuration', 5);
+        const pomodoroLongBreak = config.get<number>('pomodoro.longBreakDuration', 15);
+        const pomodoroCyclesBeforeLongBreak = config.get<number>('pomodoro.cyclesBeforeLongBreak', 4);
+        pomodoroTimer = new PomodoroTimer(pomodoroWorkMinutes, pomodoroShortBreak, pomodoroLongBreak, pomodoroCyclesBeforeLongBreak);
+        pomodoroTimer.onStatusUpdate((status) => {
+            updatePomodoroStatusBar(status);
+        });
+        pomodoroTimer.onPhaseComplete((phase) => {
+            handlePomodoroPhaseComplete(phase);
+        });
+        console.log('Pomodoro timer initialized successfully');
+
+        // Initialize recent projects manager
+        console.log('Initializing recent projects manager...');
+        recentProjectsManager = new RecentProjectsManager(context);
+        console.log('Recent projects manager initialized successfully');
 
         // Initialize Synergy services
         console.log('Initializing Synergy services...');
@@ -220,6 +253,55 @@ async function initializeExtension(context: vscode.ExtensionContext) {
             })
         );
 
+        // Quick Switch commands
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.quickSwitch', async () => {
+                await showQuickSwitch();
+            })
+        );
+
+        // Pomodoro commands
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.pomodoro.toggle', async () => {
+                await togglePomodoro();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.pomodoro.start', async () => {
+                pomodoroTimer.startWork();
+                vscode.window.showInformationMessage('🍅 Pomodoro work session started (25 min)');
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.pomodoro.pause', async () => {
+                pomodoroTimer.pause();
+                vscode.window.showInformationMessage('⏸️ Pomodoro paused');
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.pomodoro.resume', async () => {
+                pomodoroTimer.resume();
+                vscode.window.showInformationMessage('▶️ Pomodoro resumed');
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.pomodoro.stop', async () => {
+                pomodoroTimer.stop();
+                vscode.window.showInformationMessage('⏹️ Pomodoro stopped');
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.pomodoro.skip', async () => {
+                pomodoroTimer.skip();
+                vscode.window.showInformationMessage('⏭️ Pomodoro phase skipped');
+            })
+        );
+
         console.log('Commands registered successfully');
 
         // Listen for configuration changes
@@ -286,6 +368,13 @@ async function startTracking(): Promise<void> {
 
     try {
         await timeTracker.startTrackingProject(projectPath, projectName);
+
+        // Add to recent projects
+        const project = timeTracker.getCurrentProject();
+        if (project && recentProjectsManager) {
+            recentProjectsManager.addProject(project);
+        }
+
         vscode.window.showInformationMessage(`Started tracking: ${projectName}`);
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to start tracking: ${error}`);
@@ -1873,9 +1962,184 @@ async function selectSynergyProject(): Promise<void> {
     }
 }
 
+// Quick Switch command handler
+async function showQuickSwitch(): Promise<void> {
+    const recentProjects = recentProjectsManager.getRecentProjects();
+
+    if (recentProjects.length === 0) {
+        vscode.window.showInformationMessage('No recent projects found. Start tracking a project first!');
+        return;
+    }
+
+    // Create quick pick items
+    const quickPickItems = recentProjects.map(project => ({
+        label: project.name,
+        description: project.path,
+        detail: `Last tracked: ${new Date(project.updated_at!).toLocaleString()}`,
+        project: project
+    }));
+
+    // Show quick pick
+    const selected = await vscode.window.showQuickPick(quickPickItems, {
+        placeHolder: 'Select a project to switch to',
+        matchOnDescription: true,
+        matchOnDetail: true
+    });
+
+    if (!selected) {
+        return; // User cancelled
+    }
+
+    // Stop current tracking if any
+    if (timeTracker.getTrackingState() !== TrackingState.STOPPED) {
+        await timeTracker.stopTracking();
+    }
+
+    // Start tracking the selected project
+    await timeTracker.startTrackingProject(selected.project.path, selected.project.name);
+    recentProjectsManager.addProject(selected.project);
+
+    vscode.window.showInformationMessage(`✓ Switched to: ${selected.project.name}`);
+
+    // Refresh sidebar
+    if (sidebarProvider) {
+        sidebarProvider.refresh();
+    }
+}
+
+// Pomodoro command handlers
+async function togglePomodoro(): Promise<void> {
+    const status = pomodoroTimer.getStatus();
+
+    if (status.phase === PomodoroPhase.STOPPED) {
+        // Show menu to start work or break
+        const choice = await vscode.window.showQuickPick([
+            { label: '🍅 Start Work Session', value: 'work' },
+            { label: '☕ Start Short Break', value: 'short' },
+            { label: '🌴 Start Long Break', value: 'long' }
+        ], {
+            placeHolder: 'Select Pomodoro mode'
+        });
+
+        if (!choice) {
+            return;
+        }
+
+        if (choice.value === 'work') {
+            pomodoroTimer.startWork();
+        } else if (choice.value === 'short') {
+            pomodoroTimer.startShortBreak();
+        } else if (choice.value === 'long') {
+            pomodoroTimer.startLongBreak();
+        }
+    } else if (status.isActive) {
+        // Show menu for active pomodoro
+        const choice = await vscode.window.showQuickPick([
+            { label: '⏸️ Pause', value: 'pause' },
+            { label: '⏹️ Stop', value: 'stop' },
+            { label: '⏭️ Skip to Next Phase', value: 'skip' }
+        ], {
+            placeHolder: 'Pomodoro is running...'
+        });
+
+        if (!choice) {
+            return;
+        }
+
+        if (choice.value === 'pause') {
+            pomodoroTimer.pause();
+        } else if (choice.value === 'stop') {
+            pomodoroTimer.stop();
+        } else if (choice.value === 'skip') {
+            pomodoroTimer.skip();
+        }
+    } else {
+        // Paused - show resume or stop
+        const choice = await vscode.window.showQuickPick([
+            { label: '▶️ Resume', value: 'resume' },
+            { label: '⏹️ Stop', value: 'stop' }
+        ], {
+            placeHolder: 'Pomodoro is paused...'
+        });
+
+        if (!choice) {
+            return;
+        }
+
+        if (choice.value === 'resume') {
+            pomodoroTimer.resume();
+        } else if (choice.value === 'stop') {
+            pomodoroTimer.stop();
+        }
+    }
+}
+
+function updatePomodoroStatusBar(status: any): void {
+    if (status.phase === PomodoroPhase.STOPPED) {
+        pomodoroStatusBarItem.text = '🍅 Pomodoro';
+        pomodoroStatusBarItem.tooltip = 'Click to start Pomodoro timer';
+        pomodoroStatusBarItem.color = undefined;
+        return;
+    }
+
+    const minutes = Math.floor(status.remainingSeconds / 60);
+    const seconds = status.remainingSeconds % 60;
+    const timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+
+    let icon = '🍅';
+    let color = undefined;
+    let label = '';
+
+    switch (status.phase) {
+        case PomodoroPhase.WORK:
+            icon = status.isActive ? '🍅' : '⏸️';
+            color = status.isActive ? '#4caf50' : '#ff9800';
+            label = 'Work';
+            break;
+        case PomodoroPhase.SHORT_BREAK:
+            icon = status.isActive ? '☕' : '⏸️';
+            color = status.isActive ? '#2196f3' : '#ff9800';
+            label = 'Break';
+            break;
+        case PomodoroPhase.LONG_BREAK:
+            icon = status.isActive ? '🌴' : '⏸️';
+            color = status.isActive ? '#2196f3' : '#ff9800';
+            label = 'Long Break';
+            break;
+    }
+
+    pomodoroStatusBarItem.text = `${icon} ${timeStr} ${label}`;
+    pomodoroStatusBarItem.tooltip = `Pomodoro ${label} - ${timeStr} remaining\nCycle: ${status.cycleCount}\nClick for options`;
+    pomodoroStatusBarItem.color = color;
+}
+
+function handlePomodoroPhaseComplete(phase: PomodoroPhase): void {
+    // Integration with time tracker
+    if (phase === PomodoroPhase.WORK) {
+        // Optionally pause time tracking during break
+        const config = vscode.workspace.getConfiguration('timetracker');
+        const autoPauseOnBreak = config.get<boolean>('pomodoro.autoPauseOnBreak', true);
+
+        if (autoPauseOnBreak && timeTracker.getTrackingState() === TrackingState.TRACKING) {
+            timeTracker.pauseTracking();
+        }
+    } else if (phase === PomodoroPhase.SHORT_BREAK || phase === PomodoroPhase.LONG_BREAK) {
+        // Optionally resume time tracking after break
+        const config = vscode.workspace.getConfiguration('timetracker');
+        const autoResumeAfterBreak = config.get<boolean>('pomodoro.autoResumeAfterBreak', false);
+
+        if (autoResumeAfterBreak && timeTracker.getTrackingState() === TrackingState.PAUSED) {
+            timeTracker.resumeTracking();
+        }
+    }
+}
+
 export function deactivate() {
     if (timeTracker) {
         timeTracker.stop();
+    }
+    if (pomodoroTimer) {
+        pomodoroTimer.dispose();
     }
     if (db) {
         db.close();

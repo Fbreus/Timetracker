@@ -1,8 +1,8 @@
 {
   "name": "vscode-time-tracker",
   "displayName": "Time Tracker",
-  "description": "Automatic time tracking for VS Code projects with analytics dashboard, comprehensive Synergy PSA integration, and enhanced UX visualizations",
-  "version": "2.1.0",
+  "description": "Automatic time tracking for VS Code projects with analytics dashboard, comprehensive Synergy PSA integration, enhanced UX visualizations, Quick Switch, and Pomodoro timer",
+  "version": "2.2.0",
   "publisher": "timetracker",
   "license": "MIT",
   "repository": {
@@ -97,6 +97,56 @@
       {
         "command": "timetracker.syncCustomers",
         "title": "Time Tracker: Sync Customers from Synergy"
+      },
+      {
+        "command": "timetracker.quickSwitch",
+        "title": "Time Tracker: Quick Switch Project"
+      },
+      {
+        "command": "timetracker.pomodoro.toggle",
+        "title": "Time Tracker: Pomodoro - Toggle Menu"
+      },
+      {
+        "command": "timetracker.pomodoro.start",
+        "title": "Time Tracker: Pomodoro - Start Work Session"
+      },
+      {
+        "command": "timetracker.pomodoro.pause",
+        "title": "Time Tracker: Pomodoro - Pause"
+      },
+      {
+        "command": "timetracker.pomodoro.resume",
+        "title": "Time Tracker: Pomodoro - Resume"
+      },
+      {
+        "command": "timetracker.pomodoro.stop",
+        "title": "Time Tracker: Pomodoro - Stop"
+      },
+      {
+        "command": "timetracker.pomodoro.skip",
+        "title": "Time Tracker: Pomodoro - Skip Phase"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "timetracker.quickSwitch",
+        "key": "ctrl+alt+p",
+        "mac": "cmd+alt+p"
+      },
+      {
+        "command": "timetracker.pomodoro.toggle",
+        "key": "ctrl+alt+t",
+        "mac": "cmd+alt+t"
+      },
+      {
+        "command": "timetracker.startTracking",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s"
+      },
+      {
+        "command": "timetracker.stopTracking",
+        "key": "ctrl+alt+x",
+        "mac": "cmd+alt+x"
       }
     ],
     "viewsContainers": {
@@ -254,6 +304,36 @@
           "type": "string",
           "default": "https://default8e426d61a69d49278a3fef2f62da7f.57.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/2a6aeb0a4dd04785a7e49d8a03702975/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=dvAvMPws4G4Dm846yzL8Akkp0GboBOlsifL19VT6s7w",
           "description": "Power Automate endpoint URL for fetching ResID from email"
+        },
+        "timetracker.pomodoro.workDuration": {
+          "type": "number",
+          "default": 25,
+          "description": "Work session duration in minutes"
+        },
+        "timetracker.pomodoro.shortBreakDuration": {
+          "type": "number",
+          "default": 5,
+          "description": "Short break duration in minutes"
+        },
+        "timetracker.pomodoro.longBreakDuration": {
+          "type": "number",
+          "default": 15,
+          "description": "Long break duration in minutes"
+        },
+        "timetracker.pomodoro.cyclesBeforeLongBreak": {
+          "type": "number",
+          "default": 4,
+          "description": "Number of work cycles before a long break"
+        },
+        "timetracker.pomodoro.autoPauseOnBreak": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically pause time tracking during Pomodoro breaks"
+        },
+        "timetracker.pomodoro.autoResumeAfterBreak": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically resume time tracking after Pomodoro breaks"
         }
       }
     }
