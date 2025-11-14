@@ -1238,7 +1238,6 @@ function getTimeEntriesHtml(): string {
 <body>
     <div class="header">
         <h1>Time Entries (Last 30 Days)</h1>
-        <button class="submit-synergy-btn" onclick="openSynergyModal()">Submit to Synergy</button>
     </div>
     <div id="content">
         <div class="no-entries">Loading...</div>
@@ -1250,11 +1249,9 @@ function getTimeEntriesHtml(): string {
             <h2>Submit to Synergy</h2>
 
             <form id="synergyForm" onsubmit="submitToSynergy(event)">
+                <input type="hidden" id="selectedEntryId" value="">
+
                 <div class="form-group">
-                    <label for="entrySelect">Select Time Entry *</label>
-                    <select id="entrySelect" required onchange="updateEntryPreview()">
-                        <option value="">-- Select an entry --</option>
-                    </select>
                     <div id="entryPreview"></div>
                 </div>
 
@@ -1353,6 +1350,7 @@ function getTimeEntriesHtml(): string {
                                 <td>
                                     <div class="actions">
                                         <button onclick="editEntry(\${entry.id})">Edit</button>
+                                        <button onclick="openSynergyModal(\${entry.id})">Submit to Synergy</button>
                                         <button class="delete" onclick="deleteEntry(\${entry.id})">Delete</button>
                                     </div>
                                 </td>
@@ -1363,48 +1361,16 @@ function getTimeEntriesHtml(): string {
             \`;
         }
 
-        function openSynergyModal() {
-            // Populate the entry dropdown
-            const entrySelect = document.getElementById('entrySelect');
-            entrySelect.innerHTML = '<option value="">-- Select an entry --</option>';
-
-            allEntries.forEach(entry => {
-                const option = document.createElement('option');
-                option.value = entry.id;
-                option.textContent = \`\${entry.projectName} - \${formatDateTime(entry.start_time)} (\${formatDuration(entry.duration || 0)})\`;
-                entrySelect.appendChild(option);
-            });
-
-            // Show modal
-            document.getElementById('synergyModal').classList.add('active');
-        }
-
-        function closeSynergyModal() {
-            document.getElementById('synergyModal').classList.remove('active');
-            document.getElementById('synergyForm').reset();
-            document.getElementById('entryPreview').innerHTML = '';
-        }
-
-        function closeSynergyModalOnOverlay(event) {
-            if (event.target.id === 'synergyModal') {
-                closeSynergyModal();
-            }
-        }
-
-        function updateEntryPreview() {
-            const entryId = parseInt(document.getElementById('entrySelect').value);
-            const previewDiv = document.getElementById('entryPreview');
-
-            if (!entryId) {
-                previewDiv.innerHTML = '';
-                return;
-            }
-
+        function openSynergyModal(entryId) {
+            // Find the entry
             const entry = allEntries.find(e => e.id === entryId);
             if (!entry) {
-                previewDiv.innerHTML = '';
+                alert('Entry not found');
                 return;
             }
+
+            // Store the entry ID in hidden field
+            document.getElementById('selectedEntryId').value = entryId;
 
             // Auto-fill form fields
             const startDate = new Date(entry.start_time);
@@ -1415,11 +1381,14 @@ function getTimeEntriesHtml(): string {
 
             if (entry.notes) {
                 document.getElementById('synergyDescription').value = entry.notes;
+            } else {
+                document.getElementById('synergyDescription').value = '';
             }
 
             document.getElementById('synergyBillable').value = entry.is_billable ? 'yes' : 'no';
 
             // Show preview
+            const previewDiv = document.getElementById('entryPreview');
             previewDiv.innerHTML = \`
                 <div class="entry-preview">
                     <div class="entry-preview-row">
@@ -1444,13 +1413,28 @@ function getTimeEntriesHtml(): string {
                     </div>
                 </div>
             \`;
+
+            // Show modal
+            document.getElementById('synergyModal').classList.add('active');
+        }
+
+        function closeSynergyModal() {
+            document.getElementById('synergyModal').classList.remove('active');
+            document.getElementById('synergyForm').reset();
+            document.getElementById('entryPreview').innerHTML = '';
+        }
+
+        function closeSynergyModalOnOverlay(event) {
+            if (event.target.id === 'synergyModal') {
+                closeSynergyModal();
+            }
         }
 
         function submitToSynergy(event) {
             event.preventDefault();
 
             const formData = {
-                entryId: parseInt(document.getElementById('entrySelect').value),
+                entryId: parseInt(document.getElementById('selectedEntryId').value),
                 date: document.getElementById('synergyDate').value,
                 hours: parseFloat(document.getElementById('synergyHours').value),
                 projectCode: document.getElementById('synergyProjectCode').value,
