@@ -13,6 +13,7 @@ import { SynergyApiService } from './services/synergyApiService';
 import { PomodoroTimer, PomodoroPhase } from './tracking/pomodoroTimer';
 import { RecentProjectsManager } from './tracking/recentProjects';
 import { ProjectMapper } from './services/projectMapper';
+import { TeamsIntegrationService } from './services/teamsIntegration';
 
 let db: TimeTrackerDatabase;
 let timeTracker: TimeTracker;
@@ -27,6 +28,7 @@ let synergyIntegration: SynergyIntegration;
 let synergyApi: SynergyApiService;
 let pomodoroTimer: PomodoroTimer;
 let recentProjectsManager: RecentProjectsManager;
+let teamsIntegration: TeamsIntegrationService;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Time Tracker extension is activating...');
@@ -108,6 +110,20 @@ async function initializeExtension(context: vscode.ExtensionContext) {
         recentProjectsManager = new RecentProjectsManager(context);
         console.log('Recent projects manager initialized successfully');
 
+        // Initialize Teams integration
+        console.log('Initializing Teams integration...');
+        teamsIntegration = new TeamsIntegrationService();
+
+        // Hook up Teams integration with Pomodoro timer
+        pomodoroTimer.onPhaseStart((phase, durationSeconds) => {
+            if (phase === PomodoroPhase.WORK) {
+                teamsIntegration.onPomodoroWorkStart(Math.floor(durationSeconds / 60));
+            } else if (phase === PomodoroPhase.SHORT_BREAK || phase === PomodoroPhase.LONG_BREAK) {
+                teamsIntegration.onPomodoroBreakStart();
+            }
+        });
+        console.log('Teams integration initialized successfully');
+
         // Initialize Synergy services
         console.log('Initializing Synergy services...');
         synergyAuth = new SynergyAuthService();
@@ -132,9 +148,19 @@ async function initializeExtension(context: vscode.ExtensionContext) {
         sidebarProvider.setDependencies(timeTracker, db);
         console.log('Sidebar provider fully initialized');
 
-        // Listen to time tracker status updates for status bar
+        // Listen to time tracker status updates for status bar and Teams integration
+        let lastTrackingState = TrackingState.STOPPED;
         timeTracker.onStatusUpdate((status) => {
             updateStatusBar(status);
+
+            // Teams integration hooks
+            if (teamsIntegration) {
+                // Detect state transitions
+                if (status.state === 'stopped' && lastTrackingState !== TrackingState.STOPPED) {
+                    teamsIntegration.onTrackingStop();
+                }
+                lastTrackingState = status.state as TrackingState;
+            }
         });
 
         // Register commands
@@ -310,6 +336,31 @@ async function initializeExtension(context: vscode.ExtensionContext) {
             })
         );
 
+        // Teams integration commands
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.teams.connect', async () => {
+                await teamsIntegration.authenticate();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.teams.disconnect', async () => {
+                await teamsIntegration.disconnect();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.teams.toggleDND', async () => {
+                await teamsIntegration.toggleDND();
+            })
+        );
+
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.teams.status', async () => {
+                await teamsIntegration.showStatus();
+            })
+        );
+
         console.log('Commands registered successfully');
 
         // Listen for configuration changes
@@ -381,6 +432,11 @@ async function startTracking(): Promise<void> {
         const project = timeTracker.getCurrentProject();
         if (project && recentProjectsManager) {
             recentProjectsManager.addProject(project);
+        }
+
+        // Teams integration - set DND if enabled
+        if (teamsIntegration) {
+            await teamsIntegration.onTrackingStart();
         }
 
         vscode.window.showInformationMessage(`Started tracking: ${projectName}`);

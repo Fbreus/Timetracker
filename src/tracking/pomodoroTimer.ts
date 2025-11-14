@@ -24,6 +24,7 @@ export class PomodoroTimer {
     private interval?: NodeJS.Timeout;
     private statusUpdateCallbacks: Array<(status: PomodoroStatus) => void> = [];
     private phaseCompleteCallbacks: Array<(phase: PomodoroPhase) => void> = [];
+    private phaseStartCallbacks: Array<(phase: PomodoroPhase, durationSeconds: number) => void> = [];
 
     // Default durations in seconds
     private workDuration: number = 25 * 60; // 25 minutes
@@ -93,6 +94,9 @@ export class PomodoroTimer {
         if (this.interval) {
             clearInterval(this.interval);
         }
+
+        // Notify phase start (for Teams integration, etc.)
+        this.notifyPhaseStart(phase, duration);
 
         // Start countdown
         this.interval = setInterval(() => {
@@ -186,9 +190,17 @@ export class PomodoroTimer {
         this.phaseCompleteCallbacks.push(callback);
     }
 
+    public onPhaseStart(callback: (phase: PomodoroPhase, durationSeconds: number) => void): void {
+        this.phaseStartCallbacks.push(callback);
+    }
+
     private notifyStatusUpdate(): void {
         const status = this.getStatus();
         this.statusUpdateCallbacks.forEach(callback => callback(status));
+    }
+
+    private notifyPhaseStart(phase: PomodoroPhase, durationSeconds: number): void {
+        this.phaseStartCallbacks.forEach(callback => callback(phase, durationSeconds));
     }
 
     public updateSettings(

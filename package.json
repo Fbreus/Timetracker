@@ -1,8 +1,8 @@
 {
   "name": "vscode-time-tracker",
   "displayName": "Time Tracker",
-  "description": "Automatic time tracking for VS Code projects with analytics dashboard, comprehensive Synergy PSA integration, enhanced UX visualizations, Quick Switch, and Pomodoro timer",
-  "version": "2.5.1",
+  "description": "Automatic time tracking for VS Code projects with analytics dashboard, Synergy PSA integration, Quick Switch, Pomodoro timer, and Microsoft Teams Focus Mode integration",
+  "version": "2.6.0",
   "publisher": "timetracker",
   "license": "MIT",
   "repository": {
@@ -133,6 +133,22 @@
       {
         "command": "timetracker.pomodoro.skip",
         "title": "Time Tracker: Pomodoro - Skip Phase"
+      },
+      {
+        "command": "timetracker.teams.connect",
+        "title": "Time Tracker: Teams - Connect"
+      },
+      {
+        "command": "timetracker.teams.disconnect",
+        "title": "Time Tracker: Teams - Disconnect"
+      },
+      {
+        "command": "timetracker.teams.toggleDND",
+        "title": "Time Tracker: Teams - Toggle Do Not Disturb"
+      },
+      {
+        "command": "timetracker.teams.status",
+        "title": "Time Tracker: Teams - Show Status"
       }
     ],
     "keybindings": [
@@ -342,6 +358,36 @@
           "type": "boolean",
           "default": false,
           "description": "Automatically resume time tracking after Pomodoro breaks"
+        },
+        "timetracker.teams.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable Microsoft Teams integration for focus mode"
+        },
+        "timetracker.teams.autoSetDNDOnPomodoro": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically set Teams to Do Not Disturb during Pomodoro work sessions"
+        },
+        "timetracker.teams.autoSetDNDOnTracking": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically set Teams to Do Not Disturb when time tracking starts"
+        },
+        "timetracker.teams.accessToken": {
+          "type": "string",
+          "default": "",
+          "description": "Microsoft Graph API access token (stored securely)"
+        },
+        "timetracker.teams.refreshToken": {
+          "type": "string",
+          "default": "",
+          "description": "Microsoft Graph API refresh token (stored securely)"
+        },
+        "timetracker.teams.tokenExpiry": {
+          "type": "number",
+          "default": 0,
+          "description": "Access token expiration timestamp"
         }
       }
     }
