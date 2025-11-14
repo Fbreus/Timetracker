@@ -116,7 +116,8 @@ export class TimeTracker {
             project_id: project.id!,
             start_time: new Date().toISOString(),
             is_manual: false,
-            is_billable: false
+            is_billable: false,
+            synergy_synced: false
         });
 
         this.currentEntry = this.db.getTimeEntry(entryId);
@@ -354,7 +355,8 @@ export class TimeTracker {
             duration: durationSeconds,
             is_manual: true,
             notes,
-            is_billable: isBillable
+            is_billable: isBillable,
+            synergy_synced: false
         });
 
         // Update daily summary

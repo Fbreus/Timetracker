@@ -15,12 +15,23 @@ export interface Project {
 export interface TimeEntry {
     id?: number;
     project_id: number;
+    customer_id?: number;
     start_time: string;
     end_time?: string;
     duration?: number;
     is_manual: boolean;
     notes?: string;
     is_billable: boolean;
+    // Basic sync fields
+    synergy_synced: boolean;
+    synergy_sync_date?: string;
+    synergy_id?: string;
+    // PSA submission fields
+    synergy_submitted?: boolean;
+    synergy_submission_date?: string;
+    synergy_customer_id?: string;
+    synergy_project_no?: string;
+    synergy_response?: string;
     created_at?: string;
     updated_at?: string;
 }
@@ -43,6 +54,16 @@ export interface DailySummary {
     updated_at?: string;
 }
 
+export interface Customer {
+    id?: number;
+    account_id: string;
+    account_name: string;
+    res_id?: number;
+    last_synced_at?: string;
+    created_at?: string;
+    updated_at?: string;
+}
+
 const DATABASE_SCHEMA = `
 -- Projects table
 CREATE TABLE IF NOT EXISTS projects (
@@ -55,19 +76,40 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Customers table (Synergy)
+CREATE TABLE IF NOT EXISTS customers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id TEXT NOT NULL UNIQUE,
+    account_name TEXT NOT NULL,
+    res_id INTEGER,
+    last_synced_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Time entries table
 CREATE TABLE IF NOT EXISTS time_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL,
+    customer_id INTEGER,
     start_time DATETIME NOT NULL,
     end_time DATETIME,
     duration INTEGER,
     is_manual BOOLEAN DEFAULT 0,
     notes TEXT,
     is_billable BOOLEAN DEFAULT 0,
+    synergy_synced BOOLEAN DEFAULT 0,
+    synergy_sync_date DATETIME,
+    synergy_id TEXT,
+    synergy_submitted BOOLEAN DEFAULT 0,
+    synergy_submission_date DATETIME,
+    synergy_customer_id TEXT,
+    synergy_project_no TEXT,
+    synergy_response TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL
 );
 
 -- Activity log table
@@ -102,8 +144,12 @@ CREATE TABLE IF NOT EXISTS settings (
 
 -- Indexes for better performance
 CREATE INDEX IF NOT EXISTS idx_time_entries_project ON time_entries(project_id);
+CREATE INDEX IF NOT EXISTS idx_time_entries_customer ON time_entries(customer_id);
 CREATE INDEX IF NOT EXISTS idx_time_entries_start_time ON time_entries(start_time);
 CREATE INDEX IF NOT EXISTS idx_time_entries_end_time ON time_entries(end_time);
+CREATE INDEX IF NOT EXISTS idx_time_entries_synergy_synced ON time_entries(synergy_synced);
+CREATE INDEX IF NOT EXISTS idx_customers_account_id ON customers(account_id);
+CREATE INDEX IF NOT EXISTS idx_customers_res_id ON customers(res_id);
 CREATE INDEX IF NOT EXISTS idx_daily_summaries_date ON daily_summaries(date);
 CREATE INDEX IF NOT EXISTS idx_daily_summaries_project_date ON daily_summaries(project_id, date);
 CREATE INDEX IF NOT EXISTS idx_activity_log_entry ON activity_log(time_entry_id);
@@ -130,15 +176,20 @@ export class TimeTrackerDatabase {
 
         const SQL = await initSqlJs();
 
+        const isExistingDb = fs.existsSync(this.dbPath);
+
         // Try to load existing database
-        if (fs.existsSync(this.dbPath)) {
+        if (isExistingDb) {
             const buffer = fs.readFileSync(this.dbPath);
             this.db = new SQL.Database(new Uint8Array(buffer));
+
+            // Run migrations FIRST for existing databases (before applying full schema)
+            this.runMigrations();
         } else {
             this.db = new SQL.Database();
         }
 
-        // Execute schema
+        // Execute schema (safe now because migrations already ran)
         this.db.run(DATABASE_SCHEMA);
 
         // Enable foreign keys
@@ -146,6 +197,80 @@ export class TimeTrackerDatabase {
 
         this.initialized = true;
         this.saveToFile();
+    }
+
+    private runMigrations(): void {
+        if (!this.db) {
+            return;
+        }
+
+        try {
+            // Check if time_entries table exists
+            const tables = this.db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='time_entries'");
+            if (tables.length === 0 || tables[0].values.length === 0) {
+                return; // Table doesn't exist yet, skip migrations
+            }
+
+            console.log('Checking for database migrations...');
+
+            // Get current columns in time_entries
+            const tableInfo = this.db.exec("PRAGMA table_info(time_entries)");
+            if (tableInfo.length === 0) {
+                return;
+            }
+
+            const existingColumns = tableInfo[0].values.map(row => row[1] as string);
+
+            // Define all v2.0 columns that should exist
+            const requiredColumns = [
+                { name: 'customer_id', type: 'INTEGER' },
+                { name: 'synergy_synced', type: 'BOOLEAN DEFAULT 0' },
+                { name: 'synergy_sync_date', type: 'DATETIME' },
+                { name: 'synergy_id', type: 'TEXT' },
+                { name: 'synergy_submitted', type: 'BOOLEAN DEFAULT 0' },
+                { name: 'synergy_submission_date', type: 'DATETIME' },
+                { name: 'synergy_customer_id', type: 'TEXT' },
+                { name: 'synergy_project_no', type: 'TEXT' },
+                { name: 'synergy_response', type: 'TEXT' }
+            ];
+
+            // Add missing columns
+            let migrationsRun = 0;
+            for (const column of requiredColumns) {
+                if (!existingColumns.includes(column.name)) {
+                    console.log(`Migration: Adding ${column.name} column to time_entries`);
+                    this.db.run(`ALTER TABLE time_entries ADD COLUMN ${column.name} ${column.type}`);
+                    migrationsRun++;
+                }
+            }
+
+            // Check and create customers table if it doesn't exist
+            const customerTable = this.db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='customers'");
+            if (customerTable.length === 0 || customerTable[0].values.length === 0) {
+                console.log('Migration: Creating customers table');
+                this.db.run(`
+                    CREATE TABLE customers (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        account_id TEXT NOT NULL UNIQUE,
+                        account_name TEXT NOT NULL,
+                        res_id INTEGER,
+                        last_synced_at DATETIME,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                `);
+                migrationsRun++;
+            }
+
+            if (migrationsRun > 0) {
+                console.log(`Migration completed: ${migrationsRun} changes applied`);
+            } else {
+                console.log('Database is up to date');
+            }
+        } catch (error) {
+            console.error('Migration error:', error);
+            // Don't throw - allow initialization to continue
+        }
     }
 
     private saveToFile(): void {
@@ -264,15 +389,27 @@ export class TimeTrackerDatabase {
         }
 
         this.db.run(
-            'INSERT INTO time_entries (project_id, start_time, end_time, duration, is_manual, notes, is_billable) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            `INSERT INTO time_entries (project_id, customer_id, start_time, end_time, duration, is_manual, notes, is_billable,
+             synergy_synced, synergy_sync_date, synergy_id, synergy_submitted, synergy_submission_date,
+             synergy_customer_id, synergy_project_no, synergy_response)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 entry.project_id,
+                entry.customer_id || null,
                 entry.start_time,
                 entry.end_time || null,
                 entry.duration || null,
                 entry.is_manual ? 1 : 0,
                 entry.notes || null,
-                entry.is_billable ? 1 : 0
+                entry.is_billable ? 1 : 0,
+                entry.synergy_synced ? 1 : 0,
+                entry.synergy_sync_date || null,
+                entry.synergy_id || null,
+                entry.synergy_submitted ? 1 : 0,
+                entry.synergy_submission_date || null,
+                entry.synergy_customer_id || null,
+                entry.synergy_project_no || null,
+                entry.synergy_response || null
             ]
         );
 
@@ -378,6 +515,10 @@ export class TimeTrackerDatabase {
         const fields: string[] = [];
         const values: any[] = [];
 
+        if (updates.customer_id !== undefined) {
+            fields.push('customer_id = ?');
+            values.push(updates.customer_id);
+        }
         if (updates.end_time !== undefined) {
             fields.push('end_time = ?');
             values.push(updates.end_time);
@@ -393,6 +534,38 @@ export class TimeTrackerDatabase {
         if (updates.is_billable !== undefined) {
             fields.push('is_billable = ?');
             values.push(updates.is_billable ? 1 : 0);
+        }
+        if (updates.synergy_synced !== undefined) {
+            fields.push('synergy_synced = ?');
+            values.push(updates.synergy_synced ? 1 : 0);
+        }
+        if (updates.synergy_sync_date !== undefined) {
+            fields.push('synergy_sync_date = ?');
+            values.push(updates.synergy_sync_date);
+        }
+        if (updates.synergy_id !== undefined) {
+            fields.push('synergy_id = ?');
+            values.push(updates.synergy_id);
+        }
+        if (updates.synergy_submitted !== undefined) {
+            fields.push('synergy_submitted = ?');
+            values.push(updates.synergy_submitted ? 1 : 0);
+        }
+        if (updates.synergy_submission_date !== undefined) {
+            fields.push('synergy_submission_date = ?');
+            values.push(updates.synergy_submission_date);
+        }
+        if (updates.synergy_customer_id !== undefined) {
+            fields.push('synergy_customer_id = ?');
+            values.push(updates.synergy_customer_id);
+        }
+        if (updates.synergy_project_no !== undefined) {
+            fields.push('synergy_project_no = ?');
+            values.push(updates.synergy_project_no);
+        }
+        if (updates.synergy_response !== undefined) {
+            fields.push('synergy_response = ?');
+            values.push(updates.synergy_response);
         }
 
         if (fields.length > 0) {
@@ -413,6 +586,35 @@ export class TimeTrackerDatabase {
         }
 
         this.db.run('DELETE FROM time_entries WHERE id = ?', [id]);
+        this.saveToFile();
+    }
+
+    // Synergy sync operations
+    getUnsyncedTimeEntries(): TimeEntry[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT * FROM time_entries WHERE synergy_synced = 0 AND end_time IS NOT NULL ORDER BY start_time ASC'
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToTimeEntry(result[0].columns, row));
+    }
+
+    markTimeEntrySynced(id: number, synergyId?: string): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run(
+            'UPDATE time_entries SET synergy_synced = 1, synergy_sync_date = CURRENT_TIMESTAMP, synergy_id = ? WHERE id = ?',
+            [synergyId || null, id]
+        );
         this.saveToFile();
     }
 
@@ -595,6 +797,200 @@ export class TimeTrackerDatabase {
         return result[0].values[0][0] as string;
     }
 
+    // Synergy-specific queries
+    getUnsubmittedTimeEntries(): TimeEntry[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT * FROM time_entries WHERE synergy_submitted = 0 AND end_time IS NOT NULL AND duration IS NOT NULL ORDER BY start_time DESC'
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToTimeEntry(result[0].columns, row));
+    }
+
+    markSynergySubmitted(entryId: number, customerId: string, projectNo: string, response?: string): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run(
+            `UPDATE time_entries SET
+                synergy_submitted = 1,
+                synergy_submission_date = CURRENT_TIMESTAMP,
+                synergy_customer_id = ?,
+                synergy_project_no = ?,
+                synergy_response = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?`,
+            [customerId, projectNo, response || null, entryId]
+        );
+        this.saveToFile();
+    }
+
+    // Customer operations
+    createCustomer(customer: Customer): number {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run(
+            'INSERT INTO customers (account_id, account_name, res_id, last_synced_at) VALUES (?, ?, ?, ?)',
+            [customer.account_id, customer.account_name, customer.res_id || null, customer.last_synced_at || new Date().toISOString()]
+        );
+
+        const result = this.db.exec('SELECT last_insert_rowid() as id');
+        this.saveToFile();
+        return result[0].values[0][0] as number;
+    }
+
+    upsertCustomer(customer: Customer): number {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        // Check if customer exists
+        const existing = this.getCustomerByAccountId(customer.account_id);
+
+        if (existing) {
+            // Update existing customer
+            this.db.run(
+                'UPDATE customers SET account_name = ?, res_id = ?, last_synced_at = ?, updated_at = CURRENT_TIMESTAMP WHERE account_id = ?',
+                [customer.account_name, customer.res_id || null, new Date().toISOString(), customer.account_id]
+            );
+            this.saveToFile();
+            return existing.id!;
+        } else {
+            // Create new customer
+            return this.createCustomer(customer);
+        }
+    }
+
+    getCustomerById(id: number): Customer | undefined {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec('SELECT * FROM customers WHERE id = ?', [id]);
+
+        if (result.length === 0 || result[0].values.length === 0) {
+            return undefined;
+        }
+
+        return this.rowToCustomer(result[0].columns, result[0].values[0]);
+    }
+
+    getCustomerByAccountId(accountId: string): Customer | undefined {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec('SELECT * FROM customers WHERE account_id = ?', [accountId]);
+
+        if (result.length === 0 || result[0].values.length === 0) {
+            return undefined;
+        }
+
+        return this.rowToCustomer(result[0].columns, result[0].values[0]);
+    }
+
+    getAllCustomers(): Customer[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec('SELECT * FROM customers ORDER BY account_name ASC');
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToCustomer(result[0].columns, row));
+    }
+
+    getCustomersByResId(resId: number): Customer[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec('SELECT * FROM customers WHERE res_id = ? ORDER BY account_name ASC', [resId]);
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToCustomer(result[0].columns, row));
+    }
+
+    updateCustomer(id: number, updates: Partial<Customer>): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const fields: string[] = [];
+        const values: any[] = [];
+
+        if (updates.account_name !== undefined) {
+            fields.push('account_name = ?');
+            values.push(updates.account_name);
+        }
+        if (updates.res_id !== undefined) {
+            fields.push('res_id = ?');
+            values.push(updates.res_id);
+        }
+        if (updates.last_synced_at !== undefined) {
+            fields.push('last_synced_at = ?');
+            values.push(updates.last_synced_at);
+        }
+
+        if (fields.length > 0) {
+            fields.push('updated_at = CURRENT_TIMESTAMP');
+            values.push(id);
+
+            this.db.run(
+                `UPDATE customers SET ${fields.join(', ')} WHERE id = ?`,
+                values
+            );
+            this.saveToFile();
+        }
+    }
+
+    deleteCustomer(id: number): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run('DELETE FROM customers WHERE id = ?', [id]);
+        this.saveToFile();
+    }
+
+    // Sync customers from Synergy API
+    syncCustomers(customers: Array<{account_id: string, account_name: string}>, resId?: number): number {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        let syncedCount = 0;
+        const syncTime = new Date().toISOString();
+
+        for (const customer of customers) {
+            this.upsertCustomer({
+                account_id: customer.account_id,
+                account_name: customer.account_name,
+                res_id: resId,
+                last_synced_at: syncTime
+            });
+            syncedCount++;
+        }
+
+        return syncedCount;
+    }
+
     // Data cleanup
     cleanupOldData(retentionDays: number): void {
         if (!this.db) {
@@ -648,6 +1044,8 @@ export class TimeTrackerDatabase {
 
         obj.is_manual = Boolean(obj.is_manual);
         obj.is_billable = Boolean(obj.is_billable);
+        obj.synergy_synced = Boolean(obj.synergy_synced);
+        obj.synergy_submitted = Boolean(obj.synergy_submitted);
 
         return obj as TimeEntry;
     }
@@ -668,5 +1066,14 @@ export class TimeTrackerDatabase {
         });
 
         return obj as DailySummary;
+    }
+
+    private rowToCustomer(columns: string[], row: any[]): Customer {
+        const obj: any = {};
+        columns.forEach((col, i) => {
+            obj[col] = row[i];
+        });
+
+        return obj as Customer;
     }
 }
