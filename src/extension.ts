@@ -801,6 +801,9 @@ async function viewTimeEntries(context: vscode.ExtensionContext): Promise<void> 
                     await deleteTimeEntry(message.entryId);
                     sendTimeEntriesData(panel); // Refresh
                     break;
+                case 'submitToSynergy':
+                    await handleSynergySubmission(message.data);
+                    break;
             }
         }
     );
@@ -914,9 +917,31 @@ function getTimeEntriesHtml(): string {
             font-size: var(--vscode-font-size);
         }
 
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
         h1 {
             font-size: 24px;
-            margin-bottom: 20px;
+            margin: 0;
+        }
+
+        .submit-synergy-btn {
+            padding: 8px 16px;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .submit-synergy-btn:hover {
+            background: var(--vscode-button-hoverBackground);
         }
 
         table {
@@ -971,20 +996,225 @@ function getTimeEntriesHtml(): string {
             padding: 40px;
             color: var(--vscode-descriptionForeground);
         }
+
+        /* Synergy Modal Styles */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .synergy-card {
+            background: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 6px;
+            padding: 24px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .synergy-card h2 {
+            margin: 0 0 20px 0;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .form-group select,
+        .form-group input,
+        .form-group textarea {
+            width: 100%;
+            padding: 8px;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 3px;
+            font-family: var(--vscode-font-family);
+            font-size: 13px;
+            box-sizing: border-box;
+        }
+
+        .form-group textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .form-group select:focus,
+        .form-group input:focus,
+        .form-group textarea:focus {
+            outline: 1px solid var(--vscode-focusBorder);
+        }
+
+        .form-group .help-text {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 4px;
+        }
+
+        .entry-preview {
+            background: var(--vscode-textBlockQuote-background);
+            border-left: 3px solid var(--vscode-textLink-foreground);
+            padding: 12px;
+            margin-top: 8px;
+            border-radius: 3px;
+        }
+
+        .entry-preview-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+            font-size: 12px;
+        }
+
+        .entry-preview-label {
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .entry-preview-value {
+            font-weight: 500;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 24px;
+            justify-content: flex-end;
+        }
+
+        .form-actions button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .btn-primary {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+        }
+
+        .btn-primary:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+
+        .btn-secondary {
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+
+        .btn-secondary:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
+        }
     </style>
 </head>
 <body>
-    <h1>Time Entries (Last 30 Days)</h1>
+    <div class="header">
+        <h1>Time Entries (Last 30 Days)</h1>
+        <button class="submit-synergy-btn" onclick="openSynergyModal()">Submit to Synergy</button>
+    </div>
     <div id="content">
         <div class="no-entries">Loading...</div>
     </div>
 
+    <!-- Synergy Submission Modal -->
+    <div id="synergyModal" class="modal-overlay" onclick="closeSynergyModalOnOverlay(event)">
+        <div class="synergy-card" onclick="event.stopPropagation()">
+            <h2>Submit to Synergy</h2>
+
+            <form id="synergyForm" onsubmit="submitToSynergy(event)">
+                <div class="form-group">
+                    <label for="entrySelect">Select Time Entry *</label>
+                    <select id="entrySelect" required onchange="updateEntryPreview()">
+                        <option value="">-- Select an entry --</option>
+                    </select>
+                    <div id="entryPreview"></div>
+                </div>
+
+                <div class="form-group">
+                    <label for="synergyDate">Date *</label>
+                    <input type="date" id="synergyDate" required>
+                    <div class="help-text">Date for Synergy submission</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="synergyHours">Hours *</label>
+                    <input type="number" id="synergyHours" step="0.25" min="0" max="24" required>
+                    <div class="help-text">Number of hours to submit (will be auto-filled from entry)</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="synergyProjectCode">Project Code</label>
+                    <input type="text" id="synergyProjectCode" placeholder="e.g., PROJ-123">
+                    <div class="help-text">Project or task code in Synergy</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="synergyActivityType">Activity Type</label>
+                    <input type="text" id="synergyActivityType" placeholder="e.g., Development, Testing, Meeting">
+                    <div class="help-text">Type of work performed</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="synergyClient">Client</label>
+                    <input type="text" id="synergyClient" placeholder="Client name">
+                    <div class="help-text">Client name if applicable</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="synergyDescription">Description *</label>
+                    <textarea id="synergyDescription" required placeholder="Describe the work performed..."></textarea>
+                    <div class="help-text">Detailed description of work performed</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="synergyBillable">Billable</label>
+                    <select id="synergyBillable">
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                    </select>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeSynergyModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Submit to Synergy</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         const vscode = acquireVsCodeApi();
+        let allEntries = [];
 
         window.addEventListener('message', event => {
             const message = event.data;
             if (message.command === 'updateData') {
+                allEntries = message.entries;
                 renderEntries(message.entries);
             }
         });
@@ -1028,6 +1258,112 @@ function getTimeEntriesHtml(): string {
                     </tbody>
                 </table>
             \`;
+        }
+
+        function openSynergyModal() {
+            // Populate the entry dropdown
+            const entrySelect = document.getElementById('entrySelect');
+            entrySelect.innerHTML = '<option value="">-- Select an entry --</option>';
+
+            allEntries.forEach(entry => {
+                const option = document.createElement('option');
+                option.value = entry.id;
+                option.textContent = \`\${entry.projectName} - \${formatDateTime(entry.start_time)} (\${formatDuration(entry.duration || 0)})\`;
+                entrySelect.appendChild(option);
+            });
+
+            // Show modal
+            document.getElementById('synergyModal').classList.add('active');
+        }
+
+        function closeSynergyModal() {
+            document.getElementById('synergyModal').classList.remove('active');
+            document.getElementById('synergyForm').reset();
+            document.getElementById('entryPreview').innerHTML = '';
+        }
+
+        function closeSynergyModalOnOverlay(event) {
+            if (event.target.id === 'synergyModal') {
+                closeSynergyModal();
+            }
+        }
+
+        function updateEntryPreview() {
+            const entryId = parseInt(document.getElementById('entrySelect').value);
+            const previewDiv = document.getElementById('entryPreview');
+
+            if (!entryId) {
+                previewDiv.innerHTML = '';
+                return;
+            }
+
+            const entry = allEntries.find(e => e.id === entryId);
+            if (!entry) {
+                previewDiv.innerHTML = '';
+                return;
+            }
+
+            // Auto-fill form fields
+            const startDate = new Date(entry.start_time);
+            document.getElementById('synergyDate').value = startDate.toISOString().split('T')[0];
+
+            const hours = (entry.duration || 0) / 3600;
+            document.getElementById('synergyHours').value = hours.toFixed(2);
+
+            if (entry.notes) {
+                document.getElementById('synergyDescription').value = entry.notes;
+            }
+
+            document.getElementById('synergyBillable').value = entry.is_billable ? 'yes' : 'no';
+
+            // Show preview
+            previewDiv.innerHTML = \`
+                <div class="entry-preview">
+                    <div class="entry-preview-row">
+                        <span class="entry-preview-label">Project:</span>
+                        <span class="entry-preview-value">\${entry.projectName}</span>
+                    </div>
+                    <div class="entry-preview-row">
+                        <span class="entry-preview-label">Start:</span>
+                        <span class="entry-preview-value">\${formatDateTime(entry.start_time)}</span>
+                    </div>
+                    <div class="entry-preview-row">
+                        <span class="entry-preview-label">End:</span>
+                        <span class="entry-preview-value">\${entry.end_time ? formatDateTime(entry.end_time) : 'In progress'}</span>
+                    </div>
+                    <div class="entry-preview-row">
+                        <span class="entry-preview-label">Duration:</span>
+                        <span class="entry-preview-value">\${formatDuration(entry.duration || 0)}</span>
+                    </div>
+                    <div class="entry-preview-row">
+                        <span class="entry-preview-label">Billable:</span>
+                        <span class="entry-preview-value">\${entry.is_billable ? 'Yes' : 'No'}</span>
+                    </div>
+                </div>
+            \`;
+        }
+
+        function submitToSynergy(event) {
+            event.preventDefault();
+
+            const formData = {
+                entryId: parseInt(document.getElementById('entrySelect').value),
+                date: document.getElementById('synergyDate').value,
+                hours: parseFloat(document.getElementById('synergyHours').value),
+                projectCode: document.getElementById('synergyProjectCode').value,
+                activityType: document.getElementById('synergyActivityType').value,
+                client: document.getElementById('synergyClient').value,
+                description: document.getElementById('synergyDescription').value,
+                billable: document.getElementById('synergyBillable').value === 'yes'
+            };
+
+            // Send to VS Code extension
+            vscode.postMessage({
+                command: 'submitToSynergy',
+                data: formData
+            });
+
+            closeSynergyModal();
         }
 
         function formatDateTime(dateStr) {
