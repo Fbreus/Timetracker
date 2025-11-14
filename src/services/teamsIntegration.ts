@@ -242,41 +242,117 @@ export class TeamsIntegrationService {
     }
 
     /**
-     * Authenticate with Microsoft Teams using VS Code's OAuth flow
+     * Authenticate with Microsoft Teams using Device Code Flow
      */
     async authenticate(): Promise<boolean> {
         try {
-            vscode.window.showInformationMessage('Opening Microsoft sign-in...');
+            // Microsoft's public client ID for device code flow
+            // This is a well-known client ID that works without registration
+            const clientId = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'; // Azure CLI client ID
+            const tenantId = 'common'; // Works for all Microsoft accounts
+            const scope = 'https://graph.microsoft.com/Presence.ReadWrite';
 
-            // Use VS Code's built-in Microsoft authentication
-            // This will open a browser window for OAuth
-            const session = await vscode.authentication.getSession('microsoft', ['Presence.ReadWrite'], { createIfNone: true });
+            // Step 1: Request device code
+            vscode.window.showInformationMessage('Starting Microsoft authentication...');
 
-            if (!session) {
+            const deviceCodeResponse = await axios.post(
+                `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/devicecode`,
+                new URLSearchParams({
+                    client_id: clientId,
+                    scope: scope
+                }),
+                {
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                }
+            );
+
+            const deviceCode = deviceCodeResponse.data.device_code;
+            const userCode = deviceCodeResponse.data.user_code;
+            const verificationUri = deviceCodeResponse.data.verification_uri;
+            const expiresIn = deviceCodeResponse.data.expires_in;
+            const interval = deviceCodeResponse.data.interval;
+
+            // Step 2: Show user the code and open browser
+            const message = `To sign in, use a web browser to open ${verificationUri} and enter the code: ${userCode}`;
+
+            const result = await vscode.window.showInformationMessage(
+                `Opening browser for authentication. Code: ${userCode}`,
+                { modal: true },
+                'Open Browser',
+                'Copy Code',
+                'Cancel'
+            );
+
+            if (result === 'Cancel') {
                 vscode.window.showWarningMessage('Authentication cancelled');
                 return false;
             }
 
-            // Store the access token
-            this.config.accessToken = session.accessToken;
-            this.config.tokenExpiry = Date.now() + (3600 * 1000); // Tokens typically valid for 1 hour
-            await this.saveConfig();
-
-            // Test the token
-            const presence = await this.getCurrentPresence();
-            if (presence !== null) {
-                vscode.window.showInformationMessage('✅ Teams integration connected successfully!');
-
-                // Update enabled setting
-                const config = vscode.workspace.getConfiguration('timetracker.teams');
-                await config.update('enabled', true, vscode.ConfigurationTarget.Global);
-                this.config.enabled = true;
-
-                return true;
-            } else {
-                vscode.window.showErrorMessage('Failed to connect to Teams. Please try again.');
-                return false;
+            if (result === 'Open Browser') {
+                vscode.env.openExternal(vscode.Uri.parse(verificationUri));
             }
+
+            if (result === 'Copy Code') {
+                vscode.env.clipboard.writeText(userCode);
+                vscode.window.showInformationMessage(`Code ${userCode} copied to clipboard!`);
+                vscode.env.openExternal(vscode.Uri.parse(verificationUri));
+            }
+
+            // Step 3: Poll for token
+            vscode.window.showInformationMessage('Waiting for you to complete sign-in in browser...');
+
+            const startTime = Date.now();
+            const maxWaitTime = expiresIn * 1000;
+
+            while (Date.now() - startTime < maxWaitTime) {
+                await new Promise(resolve => setTimeout(resolve, interval * 1000));
+
+                try {
+                    const tokenResponse = await axios.post(
+                        `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+                        new URLSearchParams({
+                            client_id: clientId,
+                            grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+                            device_code: deviceCode
+                        }),
+                        {
+                            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                        }
+                    );
+
+                    // Success! We got the token
+                    this.config.accessToken = tokenResponse.data.access_token;
+                    this.config.refreshToken = tokenResponse.data.refresh_token;
+                    this.config.tokenExpiry = Date.now() + (tokenResponse.data.expires_in * 1000);
+                    await this.saveConfig();
+
+                    // Test the token
+                    const presence = await this.getCurrentPresence();
+                    if (presence !== null) {
+                        vscode.window.showInformationMessage('✅ Teams integration connected successfully!');
+
+                        // Update enabled setting
+                        const config = vscode.workspace.getConfiguration('timetracker.teams');
+                        await config.update('enabled', true, vscode.ConfigurationTarget.Global);
+                        this.config.enabled = true;
+
+                        return true;
+                    } else {
+                        vscode.window.showErrorMessage('Failed to connect to Teams. Please try again.');
+                        return false;
+                    }
+                } catch (error) {
+                    if (axios.isAxiosError(error) && error.response?.data?.error === 'authorization_pending') {
+                        // User hasn't completed auth yet, continue polling
+                        continue;
+                    }
+                    throw error;
+                }
+            }
+
+            vscode.window.showWarningMessage('Authentication timed out. Please try again.');
+            return false;
+
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             vscode.window.showErrorMessage(`Failed to authenticate with Microsoft: ${errorMessage}`);
@@ -285,23 +361,43 @@ export class TeamsIntegrationService {
     }
 
     /**
-     * Refresh access token if expired
+     * Refresh access token if expired using refresh token
      */
     private async refreshTokenIfNeeded(): Promise<boolean> {
         // Check if token is expired or about to expire (within 5 minutes)
         if (!this.config.tokenExpiry || Date.now() >= (this.config.tokenExpiry - 300000)) {
-            try {
-                // Get a fresh session (VS Code handles token refresh automatically)
-                const session = await vscode.authentication.getSession('microsoft', ['Presence.ReadWrite'], { createIfNone: false });
+            if (!this.config.refreshToken) {
+                console.error('No refresh token available');
+                return false;
+            }
 
-                if (session) {
-                    this.config.accessToken = session.accessToken;
-                    this.config.tokenExpiry = Date.now() + (3600 * 1000);
-                    await this.saveConfig();
-                    return true;
+            try {
+                const clientId = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'; // Azure CLI client ID
+                const tenantId = 'common';
+
+                const tokenResponse = await axios.post(
+                    `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+                    new URLSearchParams({
+                        client_id: clientId,
+                        grant_type: 'refresh_token',
+                        refresh_token: this.config.refreshToken,
+                        scope: 'https://graph.microsoft.com/Presence.ReadWrite'
+                    }),
+                    {
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+                    }
+                );
+
+                this.config.accessToken = tokenResponse.data.access_token;
+                if (tokenResponse.data.refresh_token) {
+                    this.config.refreshToken = tokenResponse.data.refresh_token;
                 }
+                this.config.tokenExpiry = Date.now() + (tokenResponse.data.expires_in * 1000);
+                await this.saveConfig();
+                return true;
             } catch (error) {
                 console.error('Failed to refresh token:', error);
+                vscode.window.showWarningMessage('Teams authentication expired. Please reconnect using "Teams: Connect"');
                 return false;
             }
         }
