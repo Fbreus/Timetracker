@@ -1393,31 +1393,37 @@ function getTimeEntriesHtml(): string {
                 return;
             }
 
+            // Normalize the entry name for better matching (remove special chars)
+            const normalizedEntry = entryProjectName.toLowerCase().replace(/[\s\-_\.\/\\]+/g, '');
+            const entryLower = entryProjectName.toLowerCase();
+
             // Extract keywords from entry project name (split by space, dash, underscore, etc.)
             const keywords = entryProjectName
                 .toLowerCase()
                 .split(/[\s\-_\.\/\\]+/)
-                .filter(word => word.length > 2); // Only use words longer than 2 characters
+                .filter(word => word.length > 0); // Keep all non-empty words (including single letters)
 
             // Score each project based on keyword matches
             const scoredProjects = synergyProjects.map(project => {
                 const projectText = \`\${project.projectNr} \${project.name}\`.toLowerCase();
+                const normalizedProject = projectText.replace(/[\s\-_\.\/\\]+/g, '');
                 let score = 0;
 
-                // Check for exact match
-                if (projectText.includes(entryProjectName.toLowerCase())) {
+                // Check for exact match in normalized form (ignoring separators like spaces, dashes)
+                if (normalizedProject.includes(normalizedEntry)) {
                     score += 100;
+                }
+
+                // Check for exact match with separators preserved
+                if (projectText.includes(entryLower)) {
+                    score += 50;
                 }
 
                 // Check for keyword matches
                 keywords.forEach(keyword => {
+                    // Exact substring match
                     if (projectText.includes(keyword)) {
                         score += 10;
-                    }
-                    // Bonus for match at start of word
-                    const regex = new RegExp(\`\\\\b\${keyword}\`, 'i');
-                    if (regex.test(projectText)) {
-                        score += 5;
                     }
                 });
 
