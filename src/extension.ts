@@ -202,12 +202,6 @@ async function initializeExtension(context: vscode.ExtensionContext) {
             })
         );
 
-        context.subscriptions.push(
-            vscode.commands.registerCommand('timetracker.addManualEntry', async () => {
-                await addManualEntry();
-            })
-        );
-
         // Synergy commands - Direct API sync
         context.subscriptions.push(
             vscode.commands.registerCommand('timetracker.synergy.testConnection', async () => {
