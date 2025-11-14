@@ -1393,6 +1393,9 @@ function getTimeEntriesHtml(): string {
                 return;
             }
 
+            // Log for debugging
+            console.log('Entry project name:', entryProjectName);
+
             // Normalize the entry name for better matching (remove special chars)
             const normalizedEntry = entryProjectName.toLowerCase().replace(/[\s\-_\.\/\\]+/g, '');
             const entryLower = entryProjectName.toLowerCase();
@@ -1403,9 +1406,14 @@ function getTimeEntriesHtml(): string {
                 .split(/[\s\-_\.\/\\]+/)
                 .filter(word => word.length > 0); // Keep all non-empty words (including single letters)
 
+            console.log('Normalized entry:', normalizedEntry);
+            console.log('Keywords:', keywords);
+
             // Score each project based on keyword matches
             const scoredProjects = synergyProjects.map(project => {
-                const projectText = \`\${project.projectNr} \${project.name}\`.toLowerCase();
+                // Create the full display text as it will appear in dropdown
+                const displayText = \`\${project.projectNr} - \${project.name}\`;
+                const projectText = displayText.toLowerCase();
                 const normalizedProject = projectText.replace(/[\s\-_\.\/\\]+/g, '');
                 let score = 0;
 
@@ -1427,7 +1435,11 @@ function getTimeEntriesHtml(): string {
                     }
                 });
 
-                return { ...project, score };
+                if (score > 0) {
+                    console.log('Match found:', displayText, 'Score:', score);
+                }
+
+                return { ...project, score, displayText };
             });
 
             // Sort by score (highest first), then alphabetically
