@@ -23,6 +23,7 @@ interface TeamsConfig {
     accessToken?: string;
     refreshToken?: string;
     tokenExpiry?: number;
+    clientId?: string; // Store client ID for token refresh
 }
 
 /**
@@ -49,7 +50,8 @@ export class TeamsIntegrationService {
             autoSetDNDOnTracking: config.get('autoSetDNDOnTracking', false),
             accessToken: config.get('accessToken'),
             refreshToken: config.get('refreshToken'),
-            tokenExpiry: config.get('tokenExpiry')
+            tokenExpiry: config.get('tokenExpiry'),
+            clientId: config.get('clientId')
         };
     }
 
@@ -61,6 +63,7 @@ export class TeamsIntegrationService {
         await config.update('accessToken', this.config.accessToken, vscode.ConfigurationTarget.Global);
         await config.update('refreshToken', this.config.refreshToken, vscode.ConfigurationTarget.Global);
         await config.update('tokenExpiry', this.config.tokenExpiry, vscode.ConfigurationTarget.Global);
+        await config.update('clientId', this.config.clientId, vscode.ConfigurationTarget.Global);
     }
 
     /**
@@ -246,11 +249,45 @@ export class TeamsIntegrationService {
      */
     async authenticate(): Promise<boolean> {
         try {
-            // Microsoft's public client ID for device code flow
-            // This is a well-known client ID that works without registration
-            const clientId = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'; // Azure CLI client ID
+            // Check if user wants to use custom app or guided setup
+            const choice = await vscode.window.showInformationMessage(
+                'Teams Integration requires a Microsoft Azure app registration. Choose setup method:',
+                { modal: true },
+                'Quick Setup (Recommended)',
+                'Use My App',
+                'Cancel'
+            );
+
+            if (choice === 'Cancel' || !choice) {
+                return false;
+            }
+
+            let clientId: string;
+
+            if (choice === 'Use My App') {
+                // User provides their own client ID
+                const inputClientId = await vscode.window.showInputBox({
+                    prompt: 'Enter your Azure AD Application (client) ID',
+                    placeHolder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+                    validateInput: (value) => {
+                        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                        return uuidRegex.test(value) ? null : 'Please enter a valid client ID (UUID format)';
+                    }
+                });
+
+                if (!inputClientId) {
+                    return false;
+                }
+                clientId = inputClientId;
+            } else {
+                // Quick Setup - use public Graph Explorer client
+                // Note: This may require admin consent for Presence.ReadWrite
+                clientId = 'de8bc8b5-d9f9-48b1-a8ad-b748da725064'; // Graph Explorer client ID
+            }
+
             const tenantId = 'common'; // Works for all Microsoft accounts
-            const scope = 'https://graph.microsoft.com/Presence.ReadWrite';
+            // Add offline_access to get refresh token
+            const scope = 'https://graph.microsoft.com/Presence.ReadWrite offline_access';
 
             // Step 1: Request device code
             vscode.window.showInformationMessage('Starting Microsoft authentication...');
@@ -264,7 +301,10 @@ export class TeamsIntegrationService {
                 {
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
                 }
-            );
+            ).catch(error => {
+                console.error('Device code request failed:', error.response?.data || error.message);
+                throw error;
+            });
 
             const deviceCode = deviceCodeResponse.data.device_code;
             const userCode = deviceCodeResponse.data.user_code;
@@ -324,6 +364,7 @@ export class TeamsIntegrationService {
                     this.config.accessToken = tokenResponse.data.access_token;
                     this.config.refreshToken = tokenResponse.data.refresh_token;
                     this.config.tokenExpiry = Date.now() + (tokenResponse.data.expires_in * 1000);
+                    this.config.clientId = clientId; // Save client ID for refresh
                     await this.saveConfig();
 
                     // Test the token
@@ -366,22 +407,21 @@ export class TeamsIntegrationService {
     private async refreshTokenIfNeeded(): Promise<boolean> {
         // Check if token is expired or about to expire (within 5 minutes)
         if (!this.config.tokenExpiry || Date.now() >= (this.config.tokenExpiry - 300000)) {
-            if (!this.config.refreshToken) {
-                console.error('No refresh token available');
+            if (!this.config.refreshToken || !this.config.clientId) {
+                console.error('No refresh token or client ID available');
                 return false;
             }
 
             try {
-                const clientId = '04b07795-8ddb-461a-bbee-02f9e1bf7b46'; // Azure CLI client ID
                 const tenantId = 'common';
 
                 const tokenResponse = await axios.post(
                     `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
                     new URLSearchParams({
-                        client_id: clientId,
+                        client_id: this.config.clientId,
                         grant_type: 'refresh_token',
                         refresh_token: this.config.refreshToken,
-                        scope: 'https://graph.microsoft.com/Presence.ReadWrite'
+                        scope: 'https://graph.microsoft.com/Presence.ReadWrite offline_access'
                     }),
                     {
                         headers: { 'Content-Type': 'application/x-www-form-urlencoded' }

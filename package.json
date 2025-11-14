@@ -2,7 +2,7 @@
   "name": "vscode-time-tracker",
   "displayName": "Time Tracker",
   "description": "Automatic time tracking for VS Code projects with analytics dashboard, Synergy PSA integration, Quick Switch, Pomodoro timer, and Microsoft Teams Focus Mode integration",
-  "version": "2.6.2",
+  "version": "2.6.3",
   "publisher": "timetracker",
   "license": "MIT",
   "repository": {
@@ -388,6 +388,11 @@
           "type": "number",
           "default": 0,
           "description": "Access token expiration timestamp"
+        },
+        "timetracker.teams.clientId": {
+          "type": "string",
+          "default": "",
+          "description": "Azure AD Application (client) ID for Teams authentication"
         }
       }
     }
