@@ -1669,9 +1669,12 @@ async function handleSynergySubmission(data: any): Promise<void> {
         if (data && data.entryId) {
             const entry = db.getTimeEntry(data.entryId);
             if (entry) {
-                // Submit single entry to Synergy
-                const startTime = new Date(entry.start_time);
-                const hours = (entry.duration || 0) / 3600;
+                // Use the date from the form, not the entry's original date
+                const startTime = data.date ? new Date(data.date) : new Date(entry.start_time);
+
+                // Use the hours from the form, not calculated from entry duration
+                const hours = data.hours ? parseFloat(data.hours) : (entry.duration || 0) / 3600;
+
                 const description = data.description || entry.notes || 'Time tracking entry';
 
                 await synergyService.submitTimeEntry(startTime, hours, description, {
