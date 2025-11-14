@@ -78,6 +78,9 @@ export class TeamsIntegrationService {
             return null;
         }
 
+        // Refresh token if needed
+        await this.refreshTokenIfNeeded();
+
         try {
             const response = await axios.get('https://graph.microsoft.com/v1.0/me/presence', {
                 headers: {
@@ -103,6 +106,9 @@ export class TeamsIntegrationService {
         if (!this.isEnabled()) {
             return false;
         }
+
+        // Refresh token if needed
+        await this.refreshTokenIfNeeded();
 
         try {
             // Use presence API to set status
@@ -236,144 +242,70 @@ export class TeamsIntegrationService {
     }
 
     /**
-     * Authenticate with Microsoft Teams using device code flow
+     * Authenticate with Microsoft Teams using VS Code's OAuth flow
      */
     async authenticate(): Promise<boolean> {
-        // Show instructions for manual token setup
-        const result = await vscode.window.showInformationMessage(
-            'Teams Integration Setup: You need to provide a Microsoft Graph API access token. Would you like instructions?',
-            'Show Instructions',
-            'Enter Token',
-            'Cancel'
-        );
+        try {
+            vscode.window.showInformationMessage('Opening Microsoft sign-in...');
 
-        if (result === 'Show Instructions') {
-            const instructions = `
-# Microsoft Teams Integration Setup
+            // Use VS Code's built-in Microsoft authentication
+            // This will open a browser window for OAuth
+            const session = await vscode.authentication.getSession('microsoft', ['Presence.ReadWrite'], { createIfNone: true });
 
-To enable Teams integration, you need to create an access token:
+            if (!session) {
+                vscode.window.showWarningMessage('Authentication cancelled');
+                return false;
+            }
 
-1. **Register an Azure AD Application**:
-   - Go to https://portal.azure.com
-   - Navigate to "Azure Active Directory" > "App registrations"
-   - Click "New registration"
-   - Name: "VS Code Time Tracker"
-   - Supported account types: "Accounts in this organizational directory only"
-   - Click "Register"
+            // Store the access token
+            this.config.accessToken = session.accessToken;
+            this.config.tokenExpiry = Date.now() + (3600 * 1000); // Tokens typically valid for 1 hour
+            await this.saveConfig();
 
-2. **Configure API Permissions**:
-   - In your app, go to "API permissions"
-   - Click "Add a permission" > "Microsoft Graph" > "Delegated permissions"
-   - Add these permissions:
-     - Presence.ReadWrite
-   - Click "Grant admin consent"
+            // Test the token
+            const presence = await this.getCurrentPresence();
+            if (presence !== null) {
+                vscode.window.showInformationMessage('✅ Teams integration connected successfully!');
 
-3. **Get Authentication Details**:
-   - Note your "Application (client) ID"
-   - Go to "Certificates & secrets" > "New client secret"
-   - Copy the secret value immediately
+                // Update enabled setting
+                const config = vscode.workspace.getConfiguration('timetracker.teams');
+                await config.update('enabled', true, vscode.ConfigurationTarget.Global);
+                this.config.enabled = true;
 
-4. **Get Access Token**:
-   - Use the Azure AD authentication flow or a tool like Postman
-   - Endpoint: https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
-   - Or use this simplified approach: Enter the token manually in the next step
-
-For a simpler approach, you can use Microsoft Graph Explorer to get a temporary token:
-- Go to https://developer.microsoft.com/graph/graph-explorer
-- Sign in and consent to Presence.ReadWrite permission
-- Copy the access token from the request headers
-            `;
-
-            const panel = vscode.window.createWebviewPanel(
-                'teamsSetup',
-                'Teams Integration Setup',
-                vscode.ViewColumn.One,
-                {}
-            );
-
-            panel.webview.html = `
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <style>
-                        body {
-                            font-family: var(--vscode-font-family);
-                            padding: 20px;
-                            line-height: 1.6;
-                        }
-                        pre {
-                            background: var(--vscode-textBlockQuote-background);
-                            padding: 15px;
-                            border-radius: 5px;
-                            overflow-x: auto;
-                        }
-                        h1 { color: var(--vscode-textLink-foreground); }
-                        ol { margin-left: 20px; }
-                        li { margin-bottom: 10px; }
-                    </style>
-                </head>
-                <body>
-                    <pre>${instructions.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>
-                </body>
-                </html>
-            `;
-
-            // After showing instructions, prompt for token
-            setTimeout(() => {
-                this.promptForToken();
-            }, 2000);
-
+                return true;
+            } else {
+                vscode.window.showErrorMessage('Failed to connect to Teams. Please try again.');
+                return false;
+            }
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            vscode.window.showErrorMessage(`Failed to authenticate with Microsoft: ${errorMessage}`);
             return false;
-        } else if (result === 'Enter Token') {
-            return await this.promptForToken();
         }
-
-        return false;
     }
 
     /**
-     * Prompt user to enter access token
+     * Refresh access token if expired
      */
-    private async promptForToken(): Promise<boolean> {
-        const token = await vscode.window.showInputBox({
-            prompt: 'Enter your Microsoft Graph API access token',
-            password: true,
-            placeHolder: 'eyJ0eXAiOiJKV1QiLCJub25jZSI6...',
-            validateInput: (value) => {
-                if (!value || value.trim().length === 0) {
-                    return 'Token cannot be empty';
+    private async refreshTokenIfNeeded(): Promise<boolean> {
+        // Check if token is expired or about to expire (within 5 minutes)
+        if (!this.config.tokenExpiry || Date.now() >= (this.config.tokenExpiry - 300000)) {
+            try {
+                // Get a fresh session (VS Code handles token refresh automatically)
+                const session = await vscode.authentication.getSession('microsoft', ['Presence.ReadWrite'], { createIfNone: false });
+
+                if (session) {
+                    this.config.accessToken = session.accessToken;
+                    this.config.tokenExpiry = Date.now() + (3600 * 1000);
+                    await this.saveConfig();
+                    return true;
                 }
-                if (value.length < 100) {
-                    return 'Token seems too short. Please enter a valid access token.';
-                }
-                return null;
+            } catch (error) {
+                console.error('Failed to refresh token:', error);
+                return false;
             }
-        });
-
-        if (!token) {
-            return false;
         }
-
-        // Save token
-        this.config.accessToken = token;
-        this.config.tokenExpiry = Date.now() + (3600 * 1000); // Assume 1 hour expiry
-        await this.saveConfig();
-
-        // Test the token
-        const presence = await this.getCurrentPresence();
-        if (presence !== null) {
-            vscode.window.showInformationMessage('✅ Teams integration connected successfully!');
-
-            // Update enabled setting
-            const config = vscode.workspace.getConfiguration('timetracker.teams');
-            await config.update('enabled', true, vscode.ConfigurationTarget.Global);
-            this.config.enabled = true;
-
-            return true;
-        } else {
-            vscode.window.showErrorMessage('Failed to connect to Teams. Please check your token and try again.');
-            return false;
-        }
+        return true;
     }
 
     /**
