@@ -1376,10 +1376,10 @@ function getTimeEntriesHtml(): string {
             const startDate = new Date(entry.start_time);
             document.getElementById('synergyDate').value = startDate.toISOString().split('T')[0];
 
-            // Calculate hours rounded to 15-minute increments
-            // 15 min = 0.15, 30 min = 0.30, 45 min = 0.45, etc.
+            // Calculate hours rounded UP to 15-minute increments
+            // Always round up: 1-15 min = 0.15, 16-30 min = 0.30, 31-45 min = 0.45, etc.
             const totalMinutes = Math.floor((entry.duration || 0) / 60);
-            const roundedMinutes = Math.round(totalMinutes / 15) * 15;
+            const roundedMinutes = Math.ceil(totalMinutes / 15) * 15;
             const hours = roundedMinutes / 100;
             document.getElementById('synergyHours').value = hours.toFixed(2);
 
