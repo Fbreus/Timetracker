@@ -1119,6 +1119,30 @@ function getTimeEntriesHtml(): string {
             color: var(--vscode-descriptionForeground);
         }
 
+        /* Group/Detail Row Styles */
+        .group-row {
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        .group-row:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+
+        .detail-row {
+            background: var(--vscode-editor-background);
+        }
+
+        .detail-row:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+
+        .expand-icon {
+            font-size: 10px;
+            display: inline-block;
+            width: 12px;
+        }
+
         /* Synergy Modal Styles */
         .modal-overlay {
             display: none;
@@ -1332,6 +1356,7 @@ function getTimeEntriesHtml(): string {
         const vscode = acquireVsCodeApi();
         let allEntries = [];
         let synergyProjects = [];
+        let expandedGroups = new Set();
 
         window.addEventListener('message', event => {
             const message = event.data;
@@ -1373,6 +1398,7 @@ function getTimeEntriesHtml(): string {
                 <table>
                     <thead>
                         <tr>
+                            <th style="width: 30px;"></th>
                             <th>Date</th>
                             <th>Project</th>
                             <th>Start Time</th>
@@ -1383,25 +1409,68 @@ function getTimeEntriesHtml(): string {
                         </tr>
                     </thead>
                     <tbody>
-                        \${grouped.map(group => \`
-                            <tr>
-                                <td>\${formatDate(group.date)}</td>
-                                <td>\${group.projectName}</td>
-                                <td>\${formatTime(group.startTime)}</td>
-                                <td>\${formatTime(group.endTime)}</td>
-                                <td>\${formatDuration(group.totalDuration)}</td>
-                                <td>\${group.notes || '-'}</td>
-                                <td>
-                                    <div class="actions">
-                                        <button onclick="openSynergyModal(\${group.entryIds[0]}, \${group.totalDuration})">Submit to Synergy</button>
-                                        <button class="delete" onclick="deleteGroupedEntries(\${JSON.stringify(group.entryIds).replace(/"/g, '&quot;')})">Delete All</button>
-                                    </div>
-                                </td>
-                            </tr>
-                        \`).join('')}
+                        \${grouped.map((group, groupIndex) => {
+                            const groupKey = \`\${group.date}_\${group.projectId}\`;
+                            const isExpanded = expandedGroups.has(groupKey);
+                            const expandIcon = isExpanded ? '▼' : '▶';
+
+                            let html = \`
+                                <tr class="group-row" onclick="toggleGroup('\${groupKey}')">
+                                    <td style="text-align: center; cursor: pointer; user-select: none;">
+                                        <span class="expand-icon">\${expandIcon}</span>
+                                    </td>
+                                    <td>\${formatDate(group.date)}</td>
+                                    <td><strong>\${group.projectName}</strong> <span style="color: var(--vscode-descriptionForeground);">(\${group.entryIds.length} entries)</span></td>
+                                    <td>\${formatTime(group.startTime)}</td>
+                                    <td>\${formatTime(group.endTime)}</td>
+                                    <td><strong>\${formatDuration(group.totalDuration)}</strong></td>
+                                    <td>\${group.notes || '-'}</td>
+                                    <td>
+                                        <div class="actions">
+                                            <button onclick="event.stopPropagation(); openSynergyModal(\${group.entryIds[0]}, \${group.totalDuration})">Submit to Synergy</button>
+                                            <button class="delete" onclick="event.stopPropagation(); deleteGroupedEntries(\${JSON.stringify(group.entryIds).replace(/"/g, '&quot;')})">Delete All</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            \`;
+
+                            if (isExpanded) {
+                                // Add individual entry rows
+                                group.entries.forEach(entry => {
+                                    html += \`
+                                        <tr class="detail-row">
+                                            <td></td>
+                                            <td style="padding-left: 20px; color: var(--vscode-descriptionForeground);">↳</td>
+                                            <td style="color: var(--vscode-descriptionForeground); font-size: 0.9em;">\${entry.projectName}</td>
+                                            <td>\${formatTime(entry.start_time)}</td>
+                                            <td>\${entry.end_time ? formatTime(entry.end_time) : 'In progress'}</td>
+                                            <td>\${formatDuration(entry.duration || 0)}</td>
+                                            <td style="font-size: 0.9em;">\${entry.notes || '-'}</td>
+                                            <td>
+                                                <div class="actions">
+                                                    <button onclick="editEntry(\${entry.id})">Edit</button>
+                                                    <button class="delete" onclick="deleteEntry(\${entry.id})">Delete</button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    \`;
+                                });
+                            }
+
+                            return html;
+                        }).join('')}
                     </tbody>
                 </table>
             \`;
+        }
+
+        function toggleGroup(groupKey) {
+            if (expandedGroups.has(groupKey)) {
+                expandedGroups.delete(groupKey);
+            } else {
+                expandedGroups.add(groupKey);
+            }
+            renderEntries(allEntries);
         }
 
         function groupEntriesByProjectAndDate(entries) {
@@ -1420,7 +1489,8 @@ function getTimeEntriesHtml(): string {
                         endTime: entry.end_time,
                         totalDuration: 0,
                         notes: [],
-                        entryIds: []
+                        entryIds: [],
+                        entries: []
                     };
                 }
 
@@ -1444,12 +1514,16 @@ function getTimeEntriesHtml(): string {
 
                 // Track entry IDs
                 groups[key].entryIds.push(entry.id);
+
+                // Store individual entries
+                groups[key].entries.push(entry);
             });
 
             // Convert to array and format notes
             return Object.values(groups).map(group => ({
                 ...group,
-                notes: group.notes.length > 0 ? group.notes.join('; ') : null
+                notes: group.notes.length > 0 ? group.notes.join('; ') : null,
+                entries: group.entries.sort((a, b) => new Date(a.start_time) - new Date(b.start_time))
             })).sort((a, b) => new Date(b.date) - new Date(a.date) || new Date(b.startTime) - new Date(a.startTime));
         }
 
