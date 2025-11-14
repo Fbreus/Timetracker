@@ -72,14 +72,27 @@ export class SynergyIntegration {
             const email = this.config.get<string>('email', '');
             const employeeId = this.config.get<string>('employeeId', '');
 
-            if (email) {
-                // Use email-based lookup
-                synergyProjects = await this.apiService.getProjectsByEmail(email);
-            } else if (employeeId) {
+            // Prefer employeeId if available (more reliable than email lookup)
+            if (employeeId) {
                 // Use direct ResID lookup
                 synergyProjects = await this.apiService.getProjectsByResId(employeeId);
+            } else if (email) {
+                // Use email-based lookup as fallback
+                try {
+                    synergyProjects = await this.apiService.getProjectsByEmail(email);
+                } catch (error) {
+                    const errorMsg = error instanceof Error ? error.message : String(error);
+                    throw new Error(
+                        `Failed to lookup ResID from email. Please configure your Employee ID (ResID) directly in settings instead.\n` +
+                        `Go to Settings > Time Tracker > Synergy > Employee ID\n` +
+                        `Original error: ${errorMsg}`
+                    );
+                }
             } else {
-                throw new Error('No email or employeeId configured');
+                throw new Error(
+                    'No email or employeeId configured. Please configure your Employee ID in settings:\n' +
+                    'Settings > Time Tracker > Synergy > Employee ID'
+                );
             }
 
             // Convert to local project format

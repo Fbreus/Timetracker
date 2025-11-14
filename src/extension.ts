@@ -254,6 +254,13 @@ async function initializeExtension(context: vscode.ExtensionContext) {
             })
         );
 
+        // Synergy commands - Configure Employee ID
+        context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.configureEmployeeId', async () => {
+                await configureEmployeeId();
+            })
+        );
+
         // Quick Switch commands
         context.subscriptions.push(
             vscode.commands.registerCommand('timetracker.quickSwitch', async () => {
@@ -1982,6 +1989,49 @@ async function selectSynergyProject(): Promise<void> {
         }
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to select Synergy project: ${error}`);
+    }
+}
+
+async function configureEmployeeId(): Promise<void> {
+    const config = vscode.workspace.getConfiguration('timetracker');
+    const currentEmployeeId = config.get<string>('synergy.employeeId', '');
+
+    const employeeId = await vscode.window.showInputBox({
+        prompt: 'Enter your Synergy Employee ID (ResID)',
+        placeHolder: 'e.g., 12345',
+        value: currentEmployeeId,
+        validateInput: (value) => {
+            if (!value || value.trim() === '') {
+                return 'Employee ID cannot be empty';
+            }
+            return null;
+        }
+    });
+
+    if (!employeeId) {
+        return; // User cancelled
+    }
+
+    try {
+        // Save to global settings
+        await config.update('synergy.employeeId', employeeId.trim(), vscode.ConfigurationTarget.Global);
+
+        // Enable Synergy integration if not already enabled
+        const isEnabled = config.get<boolean>('synergy.enabled', false);
+        if (!isEnabled) {
+            await config.update('synergy.enabled', true, vscode.ConfigurationTarget.Global);
+        }
+
+        vscode.window.showInformationMessage(
+            `Employee ID configured successfully! You can now sync Synergy projects.`,
+            'Sync Projects Now'
+        ).then(selection => {
+            if (selection === 'Sync Projects Now') {
+                vscode.commands.executeCommand('timetracker.syncSynergyProjects');
+            }
+        });
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to configure Employee ID: ${error}`);
     }
 }
 
