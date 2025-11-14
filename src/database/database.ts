@@ -550,6 +550,94 @@ export class TimeTrackerDatabase {
         }));
     }
 
+    // Get daily totals for the last N days (for trend chart)
+    getDailyTotalsForDays(days: number): Array<{date: string, total_duration: number}> {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - days);
+
+        const result = this.db.exec(
+            `SELECT date, SUM(total_duration) as total_duration
+             FROM daily_summaries
+             WHERE date >= ? AND date <= ?
+             GROUP BY date
+             ORDER BY date ASC`,
+            [startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]]
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => ({
+            date: row[0] as string,
+            total_duration: row[1] as number
+        }));
+    }
+
+    // Get hourly breakdown for a specific date (for activity timeline)
+    getHourlyBreakdownForDate(date: string): Array<{hour: number, duration: number}> {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const nextDay = new Date(date);
+        nextDay.setDate(nextDay.getDate() + 1);
+
+        const result = this.db.exec(
+            `SELECT
+                CAST(strftime('%H', start_time) AS INTEGER) as hour,
+                SUM(duration) as duration
+             FROM time_entries
+             WHERE DATE(start_time) = ? AND duration IS NOT NULL
+             GROUP BY hour
+             ORDER BY hour ASC`,
+            [date]
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => ({
+            hour: row[0] as number,
+            duration: row[1] as number
+        }));
+    }
+
+    // Get heatmap data for the last N days
+    getHeatmapData(days: number): Array<{date: string, total_duration: number}> {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const endDate = new Date();
+        const startDate = new Date();
+        startDate.setDate(startDate.getDate() - days);
+
+        const result = this.db.exec(
+            `SELECT date, SUM(total_duration) as total_duration
+             FROM daily_summaries
+             WHERE date >= ? AND date <= ?
+             GROUP BY date
+             ORDER BY date ASC`,
+            [startDate.toISOString().split('T')[0], endDate.toISOString().split('T')[0]]
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => ({
+            date: row[0] as string,
+            total_duration: row[1] as number
+        }));
+    }
+
     getTimeEntriesForDateRange(startDate: string, endDate: string): TimeEntry[] {
         if (!this.db) {
             throw new Error('Database not initialized');

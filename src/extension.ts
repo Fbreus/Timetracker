@@ -467,13 +467,21 @@ function sendDashboardData(panel: vscode.WebviewPanel): void {
     // Get all-time totals
     const allTimeTotals = db.getTotalTimeForAllProjects();
 
+    // Get chart data
+    const dailyTrend = db.getDailyTotalsForDays(30); // Last 30 days
+    const heatmapData = db.getHeatmapData(90); // Last 90 days
+    const todayTimeline = db.getHourlyBreakdownForDate(today); // Today's hourly breakdown
+
     panel.webview.postMessage({
         command: 'updateData',
         data: {
             projects,
             todaySummaries,
             weekSummaries,
-            allTimeTotals
+            allTimeTotals,
+            dailyTrend,
+            heatmapData,
+            todayTimeline
         }
     });
 }
@@ -485,128 +493,276 @@ function getDashboardHtml(): string {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Time Tracker Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
     <style>
         body {
             padding: 20px;
             color: var(--vscode-foreground);
             font-family: var(--vscode-font-family);
             font-size: var(--vscode-font-size);
+            background: var(--vscode-editor-background);
         }
 
         h1 {
-            font-size: 24px;
-            margin-bottom: 20px;
+            font-size: 28px;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .subtitle {
+            font-size: 14px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 30px;
         }
 
         h2 {
             font-size: 18px;
             margin: 30px 0 15px 0;
             border-bottom: 2px solid var(--vscode-panel-border);
-            padding-bottom: 5px;
+            padding-bottom: 8px;
+            font-weight: 600;
         }
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
             gap: 15px;
             margin-bottom: 30px;
         }
 
         .stat-card {
-            background: var(--vscode-editor-background);
-            padding: 15px;
-            border-radius: 5px;
+            background: var(--vscode-sideBar-background);
+            padding: 20px;
+            border-radius: 8px;
             border: 1px solid var(--vscode-panel-border);
+            transition: transform 0.2s;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
         }
 
         .stat-label {
-            font-size: 12px;
+            font-size: 11px;
             color: var(--vscode-descriptionForeground);
-            margin-bottom: 5px;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         .stat-value {
-            font-size: 24px;
+            font-size: 28px;
             font-weight: 700;
             color: var(--vscode-foreground);
         }
 
-        .project-list {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-        }
-
-        .project-item {
-            background: var(--vscode-editor-background);
-            padding: 15px;
-            margin-bottom: 10px;
-            border-radius: 5px;
+        .chart-container {
+            background: var(--vscode-sideBar-background);
+            padding: 20px;
+            border-radius: 8px;
             border: 1px solid var(--vscode-panel-border);
+            margin-bottom: 25px;
+            position: relative;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 300px;
+            margin-top: 15px;
+        }
+
+        .chart-wrapper.large {
+            height: 400px;
+        }
+
+        .chart-wrapper.small {
+            height: 250px;
+        }
+
+        .charts-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+
+        @media (max-width: 900px) {
+            .charts-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .heatmap-container {
+            background: var(--vscode-sideBar-background);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid var(--vscode-panel-border);
+            margin-bottom: 25px;
+            overflow-x: auto;
+        }
+
+        .heatmap {
+            display: grid;
+            grid-template-columns: repeat(13, 1fr);
+            gap: 4px;
+            margin-top: 15px;
+            min-width: 700px;
+        }
+
+        .heatmap-week {
             display: flex;
-            justify-content: space-between;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .heatmap-day {
+            width: 100%;
+            aspect-ratio: 1;
+            border-radius: 3px;
+            border: 1px solid var(--vscode-panel-border);
+            position: relative;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+
+        .heatmap-day:hover {
+            transform: scale(1.1);
+            border-color: var(--vscode-foreground);
+        }
+
+        .heatmap-day.level-0 {
+            background: var(--vscode-editor-background);
+        }
+
+        .heatmap-day.level-1 {
+            background: #0e4429;
+        }
+
+        .heatmap-day.level-2 {
+            background: #006d32;
+        }
+
+        .heatmap-day.level-3 {
+            background: #26a641;
+        }
+
+        .heatmap-day.level-4 {
+            background: #39d353;
+        }
+
+        .heatmap-legend {
+            display: flex;
             align-items: center;
-        }
-
-        .project-name {
-            font-weight: 600;
-            font-size: 14px;
-        }
-
-        .project-path {
+            gap: 5px;
+            margin-top: 15px;
             font-size: 11px;
             color: var(--vscode-descriptionForeground);
-            margin-top: 3px;
         }
 
-        .project-time {
-            font-size: 18px;
-            font-weight: 700;
-            color: var(--vscode-terminal-ansiGreen);
+        .heatmap-legend-item {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+            border: 1px solid var(--vscode-panel-border);
         }
 
         .no-data {
             color: var(--vscode-descriptionForeground);
             font-style: italic;
-            padding: 20px;
+            padding: 40px;
             text-align: center;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: var(--vscode-editorWidget-background);
+            border: 1px solid var(--vscode-editorWidget-border);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 1000;
+            display: none;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
         }
     </style>
 </head>
 <body>
-    <h1>Time Tracker Dashboard</h1>
+    <h1>📊 Analytics Dashboard</h1>
+    <div class="subtitle">Visual insights into your productivity</div>
 
-    <h2>Today's Summary</h2>
-    <div class="stats-grid" id="todayStats">
+    <h2>Summary Statistics</h2>
+    <div class="stats-grid">
         <div class="stat-card">
-            <div class="stat-label">Total Time</div>
+            <div class="stat-label">Today</div>
             <div class="stat-value" id="todayTotal">0h 0m</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Projects Worked On</div>
-            <div class="stat-value" id="todayProjects">0</div>
-        </div>
-    </div>
-
-    <h2>This Week</h2>
-    <div class="stats-grid" id="weekStats">
-        <div class="stat-card">
-            <div class="stat-label">Total Time</div>
+            <div class="stat-label">This Week</div>
             <div class="stat-value" id="weekTotal">0h 0m</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Projects Worked On</div>
-            <div class="stat-value" id="weekProjects">0</div>
+            <div class="stat-label">Projects Today</div>
+            <div class="stat-value" id="todayProjects">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">All Time</div>
+            <div class="stat-value" id="allTimeTotal">0h 0m</div>
         </div>
     </div>
 
-    <h2>All Time - Projects</h2>
-    <ul class="project-list" id="allTimeProjects">
-        <li class="no-data">No data available</li>
-    </ul>
+    <h2>📈 Analytics</h2>
+
+    <div class="charts-row">
+        <div class="chart-container">
+            <h3 style="margin: 0 0 5px 0; font-size: 16px;">Project Distribution</h3>
+            <p style="margin: 0; font-size: 11px; color: var(--vscode-descriptionForeground);">All-time breakdown by project</p>
+            <div class="chart-wrapper small">
+                <canvas id="projectPieChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h3 style="margin: 0 0 5px 0; font-size: 16px;">Today's Activity</h3>
+            <p style="margin: 0; font-size: 11px; color: var(--vscode-descriptionForeground);">Hourly breakdown</p>
+            <div class="chart-wrapper small">
+                <canvas id="todayTimelineChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <h3 style="margin: 0 0 5px 0; font-size: 16px;">30-Day Trend</h3>
+        <p style="margin: 0; font-size: 11px; color: var(--vscode-descriptionForeground);">Daily productivity over the last month</p>
+        <div class="chart-wrapper">
+            <canvas id="trendChart"></canvas>
+        </div>
+    </div>
+
+    <div class="heatmap-container">
+        <h3 style="margin: 0 0 5px 0; font-size: 16px;">90-Day Activity Heatmap</h3>
+        <p style="margin: 0 0 15px 0; font-size: 11px; color: var(--vscode-descriptionForeground);">Your contribution graph</p>
+        <div id="heatmap"></div>
+        <div class="heatmap-legend">
+            <span>Less</span>
+            <div class="heatmap-legend-item level-0"></div>
+            <div class="heatmap-legend-item level-1"></div>
+            <div class="heatmap-legend-item level-2"></div>
+            <div class="heatmap-legend-item level-3"></div>
+            <div class="heatmap-legend-item level-4"></div>
+            <span>More</span>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
 
     <script>
         const vscode = acquireVsCodeApi();
+        let charts = {};
+
+        // Chart.js default configuration for dark theme
+        Chart.defaults.color = getComputedStyle(document.body).getPropertyValue('--vscode-foreground');
+        Chart.defaults.borderColor = getComputedStyle(document.body).getPropertyValue('--vscode-panel-border');
 
         window.addEventListener('message', event => {
             const message = event.data;
@@ -616,13 +772,21 @@ function getDashboardHtml(): string {
         });
 
         function updateDashboard(data) {
-            // Update today's stats
+            updateStats(data);
+            createProjectPieChart(data.allTimeTotals);
+            createTrendChart(data.dailyTrend);
+            createHeatmap(data.heatmapData);
+            createTodayTimelineChart(data.todayTimeline);
+        }
+
+        function updateStats(data) {
+            // Today's total
             let todayTotal = 0;
             data.todaySummaries.forEach(s => todayTotal += s.total_duration);
             document.getElementById('todayTotal').textContent = formatDuration(todayTotal);
             document.getElementById('todayProjects').textContent = data.todaySummaries.length;
 
-            // Update week's stats
+            // Week's total
             const weekProjects = new Set();
             let weekTotal = 0;
             data.weekSummaries.forEach(s => {
@@ -630,23 +794,314 @@ function getDashboardHtml(): string {
                 weekProjects.add(s.project_id);
             });
             document.getElementById('weekTotal').textContent = formatDuration(weekTotal);
-            document.getElementById('weekProjects').textContent = weekProjects.size;
 
-            // Update all-time projects
-            const projectList = document.getElementById('allTimeProjects');
-            if (data.allTimeTotals.length === 0) {
-                projectList.innerHTML = '<li class="no-data">No data available</li>';
-            } else {
-                projectList.innerHTML = data.allTimeTotals.map(p => \`
-                    <li class="project-item">
-                        <div>
-                            <div class="project-name">\${p.project_name}</div>
-                            <div class="project-path">\${data.projects.find(proj => proj.id === p.project_id)?.path || ''}</div>
-                        </div>
-                        <div class="project-time">\${formatDuration(p.total_duration)}</div>
-                    </li>
-                \`).join('');
+            // All-time total
+            let allTimeTotal = 0;
+            data.allTimeTotals.forEach(p => allTimeTotal += p.total_duration);
+            document.getElementById('allTimeTotal').textContent = formatDuration(allTimeTotal);
+        }
+
+        function createProjectPieChart(allTimeTotals) {
+            const ctx = document.getElementById('projectPieChart');
+
+            if (charts.projectPie) {
+                charts.projectPie.destroy();
             }
+
+            if (allTimeTotals.length === 0) {
+                ctx.parentElement.innerHTML = '<div class="no-data">No project data available</div>';
+                return;
+            }
+
+            const colors = generateColors(allTimeTotals.length);
+
+            charts.projectPie = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: allTimeTotals.map(p => p.project_name),
+                    datasets: [{
+                        data: allTimeTotals.map(p => p.total_duration / 3600), // Convert to hours
+                        backgroundColor: colors,
+                        borderWidth: 2,
+                        borderColor: getComputedStyle(document.body).getPropertyValue('--vscode-sideBar-background')
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'right',
+                            labels: {
+                                padding: 15,
+                                font: { size: 11 },
+                                generateLabels: function(chart) {
+                                    const data = chart.data;
+                                    return data.labels.map((label, i) => ({
+                                        text: label + ' (' + data.datasets[0].data[i].toFixed(1) + 'h)',
+                                        fillStyle: data.datasets[0].backgroundColor[i],
+                                        hidden: false,
+                                        index: i
+                                    }));
+                                }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.label + ': ' + context.parsed.toFixed(1) + ' hours';
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createTrendChart(dailyTrend) {
+            const ctx = document.getElementById('trendChart');
+
+            if (charts.trend) {
+                charts.trend.destroy();
+            }
+
+            if (dailyTrend.length === 0) {
+                ctx.parentElement.innerHTML = '<div class="no-data">No trend data available</div>';
+                return;
+            }
+
+            // Fill in missing dates
+            const filledData = fillMissingDates(dailyTrend, 30);
+
+            charts.trend = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: filledData.map(d => formatDate(d.date)),
+                    datasets: [{
+                        label: 'Hours per day',
+                        data: filledData.map(d => d.total_duration / 3600),
+                        borderColor: '#3794ff',
+                        backgroundColor: 'rgba(55, 148, 255, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 3,
+                        pointHoverRadius: 6
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return 'Time: ' + context.parsed.y.toFixed(1) + ' hours';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return value + 'h';
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(128, 128, 128, 0.1)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createTodayTimelineChart(timeline) {
+            const ctx = document.getElementById('todayTimelineChart');
+
+            if (charts.timeline) {
+                charts.timeline.destroy();
+            }
+
+            if (timeline.length === 0) {
+                ctx.parentElement.innerHTML = '<div class="no-data">No activity today</div>';
+                return;
+            }
+
+            // Fill in all 24 hours
+            const hours = Array.from({length: 24}, (_, i) => i);
+            const data = hours.map(h => {
+                const entry = timeline.find(t => t.hour === h);
+                return entry ? entry.duration / 60 : 0; // Convert to minutes
+            });
+
+            charts.timeline = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: hours.map(h => h + ':00'),
+                    datasets: [{
+                        label: 'Minutes',
+                        data: data,
+                        backgroundColor: '#26a641',
+                        borderColor: '#26a641',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.parsed.y.toFixed(0) + ' minutes';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return value + 'm';
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(128, 128, 128, 0.1)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            },
+                            ticks: {
+                                maxRotation: 45,
+                                minRotation: 45,
+                                font: { size: 9 }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        function createHeatmap(heatmapData) {
+            const container = document.getElementById('heatmap');
+
+            if (heatmapData.length === 0) {
+                container.innerHTML = '<div class="no-data">No heatmap data available</div>';
+                return;
+            }
+
+            // Calculate max for color scaling
+            const max = Math.max(...heatmapData.map(d => d.total_duration));
+
+            // Group by weeks
+            const today = new Date();
+            const startDate = new Date(today);
+            startDate.setDate(startDate.getDate() - 90);
+
+            const weeks = [];
+            let currentWeek = [];
+
+            for (let i = 0; i < 91; i++) {
+                const date = new Date(startDate);
+                date.setDate(date.getDate() + i);
+                const dateStr = date.toISOString().split('T')[0];
+
+                const entry = heatmapData.find(d => d.date === dateStr);
+                const duration = entry ? entry.total_duration : 0;
+
+                currentWeek.push({
+                    date: dateStr,
+                    duration: duration,
+                    level: getHeatLevel(duration, max)
+                });
+
+                if (date.getDay() === 6 || i === 90) {
+                    weeks.push([...currentWeek]);
+                    currentWeek = [];
+                }
+            }
+
+            container.innerHTML = '<div class="heatmap">' +
+                weeks.map(week =>
+                    '<div class="heatmap-week">' +
+                    week.map(day =>
+                        \`<div class="heatmap-day level-\${day.level}"
+                             title="\${formatDate(day.date)}: \${formatDuration(day.duration)}"
+                             data-date="\${day.date}"
+                             data-duration="\${day.duration}"></div>\`
+                    ).join('') +
+                    '</div>'
+                ).join('') +
+                '</div>';
+
+            // Add hover tooltips
+            const tooltip = document.getElementById('tooltip');
+            document.querySelectorAll('.heatmap-day').forEach(day => {
+                day.addEventListener('mouseenter', (e) => {
+                    const date = e.target.getAttribute('data-date');
+                    const duration = parseInt(e.target.getAttribute('data-duration'));
+                    tooltip.innerHTML = \`<strong>\${formatDate(date)}</strong><br>\${formatDuration(duration)}\`;
+                    tooltip.style.display = 'block';
+                });
+
+                day.addEventListener('mousemove', (e) => {
+                    tooltip.style.left = (e.pageX + 10) + 'px';
+                    tooltip.style.top = (e.pageY + 10) + 'px';
+                });
+
+                day.addEventListener('mouseleave', () => {
+                    tooltip.style.display = 'none';
+                });
+            });
+        }
+
+        function getHeatLevel(duration, max) {
+            if (duration === 0) return 0;
+            const ratio = duration / max;
+            if (ratio < 0.25) return 1;
+            if (ratio < 0.5) return 2;
+            if (ratio < 0.75) return 3;
+            return 4;
+        }
+
+        function fillMissingDates(data, days) {
+            const result = [];
+            const endDate = new Date();
+
+            for (let i = days - 1; i >= 0; i--) {
+                const date = new Date(endDate);
+                date.setDate(date.getDate() - i);
+                const dateStr = date.toISOString().split('T')[0];
+
+                const entry = data.find(d => d.date === dateStr);
+                result.push({
+                    date: dateStr,
+                    total_duration: entry ? entry.total_duration : 0
+                });
+            }
+
+            return result;
         }
 
         function formatDuration(seconds) {
@@ -655,9 +1110,30 @@ function getDashboardHtml(): string {
 
             if (hours > 0) {
                 return hours + 'h ' + minutes + 'm';
-            } else {
+            } else if (minutes > 0) {
                 return minutes + 'm';
+            } else {
+                return '0m';
             }
+        }
+
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        }
+
+        function generateColors(count) {
+            const colors = [
+                '#3794ff', '#26a641', '#f97316', '#8b5cf6',
+                '#ec4899', '#14b8a6', '#f59e0b', '#ef4444',
+                '#06b6d4', '#84cc16', '#a855f7', '#10b981'
+            ];
+
+            const result = [];
+            for (let i = 0; i < count; i++) {
+                result.push(colors[i % colors.length]);
+            }
+            return result;
         }
 
         // Request initial data
