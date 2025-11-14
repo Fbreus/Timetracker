@@ -10,9 +10,18 @@ let db: TimeTrackerDatabase;
 let timeTracker: TimeTracker;
 let sidebarProvider: SidebarProvider;
 let exporter: DataExporter;
+let statusBarItem: vscode.StatusBarItem;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Time Tracker extension is activating...');
+
+    // Create status bar item
+    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
+    statusBarItem.command = 'timetracker.showDashboard';
+    statusBarItem.tooltip = 'Click to open Time Tracker Dashboard';
+    context.subscriptions.push(statusBarItem);
+    statusBarItem.show();
+    updateStatusBar({ state: 'stopped', sessionDuration: 0, todayTotal: 0 });
 
     // Register sidebar provider immediately (synchronously)
     // This prevents "no data provider" error
@@ -59,6 +68,11 @@ async function initializeExtension(context: vscode.ExtensionContext) {
         console.log('Setting sidebar provider dependencies...');
         sidebarProvider.setDependencies(timeTracker, db);
         console.log('Sidebar provider fully initialized');
+
+        // Listen to time tracker status updates for status bar
+        timeTracker.onStatusUpdate((status) => {
+            updateStatusBar(status);
+        });
 
         // Register commands
         console.log('Registering commands...');
@@ -969,6 +983,57 @@ function getTimeEntriesHtml(): string {
     </script>
 </body>
 </html>`;
+}
+
+function updateStatusBar(status: any): void {
+    if (!statusBarItem) {
+        return;
+    }
+
+    const state = status.state || 'stopped';
+    const sessionDuration = status.sessionDuration || 0;
+    const todayTotal = status.todayTotal || 0;
+
+    // Format session time
+    const hours = Math.floor(sessionDuration / 3600);
+    const minutes = Math.floor((sessionDuration % 3600) / 60);
+    const seconds = sessionDuration % 60;
+    const sessionTime = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+
+    // Format today's total
+    const totalHours = Math.floor(todayTotal / 3600);
+    const totalMinutes = Math.floor((todayTotal % 3600) / 60);
+    const totalTime = `${totalHours}h ${totalMinutes}m`;
+
+    // Status icons and colors
+    let icon = '⏱️';
+    let color = undefined;
+
+    if (state === 'tracking') {
+        icon = '▶️';
+        color = '#4caf50';
+    } else if (state === 'paused') {
+        icon = '⏸️';
+        color = '#ff9800';
+    } else {
+        icon = '⏹️';
+        color = '#757575';
+    }
+
+    statusBarItem.text = `${icon} ${sessionTime} (Today: ${totalTime})`;
+    statusBarItem.color = color;
+
+    // Update tooltip with more details
+    let tooltipText = `Time Tracker - ${state.charAt(0).toUpperCase() + state.slice(1)}\n`;
+    tooltipText += `Session: ${sessionTime}\n`;
+    tooltipText += `Today's Total: ${totalTime}`;
+
+    if (status.currentProject) {
+        tooltipText += `\nProject: ${status.currentProject.name}`;
+    }
+
+    tooltipText += '\n\nClick to open Dashboard';
+    statusBarItem.tooltip = tooltipText;
 }
 
 export function deactivate() {

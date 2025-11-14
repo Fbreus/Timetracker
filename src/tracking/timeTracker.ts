@@ -24,6 +24,8 @@ export class TimeTracker {
     private currentEntry?: TimeEntry;
     private statusUpdateCallbacks: Array<(status: TrackingStatus) => void> = [];
     private updateInterval?: NodeJS.Timeout;
+    private notifiedMilestones: Set<number> = new Set();
+    private lastIdleNotification: number = 0;
 
     constructor(db: TimeTrackerDatabase, idleTimeoutMinutes: number = 5) {
         this.db = db;
@@ -40,6 +42,7 @@ export class TimeTracker {
         this.updateInterval = setInterval(() => {
             if (this.state === TrackingState.TRACKING) {
                 this.notifyStatusUpdate();
+                this.checkMilestones();
             }
         }, 1000);
     }
@@ -58,6 +61,16 @@ export class TimeTracker {
     }
 
     public async startTrackingProject(projectPath: string, projectName: string): Promise<void> {
+        // Reset milestones at start of new day
+        const today = new Date().toISOString().split('T')[0];
+        const lastEntry = this.currentEntry;
+        if (lastEntry) {
+            const lastDate = new Date(lastEntry.start_time).toISOString().split('T')[0];
+            if (lastDate !== today) {
+                this.notifiedMilestones.clear();
+            }
+        }
+
         // Check if project is excluded
         const config = vscode.workspace.getConfiguration('timetracker');
         const excludedProjects = config.get<string[]>('excludedProjects', []);
@@ -217,8 +230,57 @@ export class TimeTracker {
                 timestamp: new Date().toISOString()
             });
 
+            // Show idle notification (only once per session)
+            const now = Date.now();
+            if (now - this.lastIdleNotification > 300000) { // 5 minutes
+                this.lastIdleNotification = now;
+                vscode.window.showWarningMessage('Time Tracker: Idle detected, pausing tracking...', 'Resume Now').then(selection => {
+                    if (selection === 'Resume Now') {
+                        this.resumeTracking();
+                    }
+                });
+            }
+
             this.pauseTracking();
         }
+    }
+
+    private checkMilestones(): void {
+        if (!this.currentProject || this.state !== TrackingState.TRACKING) {
+            return;
+        }
+
+        const today = new Date().toISOString().split('T')[0];
+        const summary = this.db.getDailySummary(this.currentProject.id!, today);
+        const todayTotal = summary?.total_duration || 0;
+
+        // Get current session time
+        let sessionDuration = 0;
+        if (this.currentEntry) {
+            const startTime = new Date(this.currentEntry.start_time);
+            const now = new Date();
+            sessionDuration = Math.floor((now.getTime() - startTime.getTime()) / 1000);
+        }
+
+        const totalSeconds = todayTotal + sessionDuration;
+        const totalHours = totalSeconds / 3600;
+
+        // Check milestones (2h, 4h, 6h, 8h)
+        const milestones = [
+            { hours: 2, message: '2 hours of productive work today! 💪', emoji: '💪' },
+            { hours: 4, message: 'Half day milestone reached! ⭐', emoji: '⭐' },
+            { hours: 6, message: '6 hours of focused work! 🔥', emoji: '🔥' },
+            { hours: 8, message: 'Full day complete! Great job! 🎉', emoji: '🎉' },
+            { hours: 10, message: 'Overtime alert! Consider taking a break 🌟', emoji: '⚠️' }
+        ];
+
+        milestones.forEach(milestone => {
+            const milestoneKey = milestone.hours * 3600; // Convert to seconds
+            if (totalHours >= milestone.hours && !this.notifiedMilestones.has(milestoneKey)) {
+                this.notifiedMilestones.add(milestoneKey);
+                vscode.window.showInformationMessage(`Time Tracker: ${milestone.message}`);
+            }
+        });
     }
 
     public getStatus(): TrackingStatus {

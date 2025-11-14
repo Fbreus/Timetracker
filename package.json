@@ -2,7 +2,7 @@
   "name": "vscode-time-tracker",
   "displayName": "Time Tracker",
   "description": "Automatic time tracking for VS Code projects with analytics dashboard",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "publisher": "timetracker",
   "license": "MIT",
   "repository": {

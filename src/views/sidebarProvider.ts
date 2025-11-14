@@ -114,11 +114,28 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
             const todaySummaries = this.db.getDailySummariesForRange(today, tomorrowStr);
 
+            // Get detailed entries for tooltips
+            const todayEntries = this.db.getAllTimeEntries(today, tomorrowStr);
+
+            // Get working hours configuration
+            const config = vscode.workspace.getConfiguration('timetracker');
+            const workingHoursStart = config.get<string>('workingHoursStart', '09:00');
+            const workingHoursEnd = config.get<string>('workingHoursEnd', '17:00');
+
+            // Calculate expected working hours in seconds
+            const [startHour, startMin] = workingHoursStart.split(':').map(Number);
+            const [endHour, endMin] = workingHoursEnd.split(':').map(Number);
+            const expectedSeconds = (endHour * 3600 + endMin * 60) - (startHour * 3600 + startMin * 60);
+
             this._view.webview.postMessage({
                 type: 'statusUpdate',
                 status: {
                     ...status,
-                    todaySummaries
+                    todaySummaries,
+                    todayEntries,
+                    expectedWorkingSeconds: expectedSeconds,
+                    workingHoursStart,
+                    workingHoursEnd
                 }
             });
         }
@@ -317,6 +334,155 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             color: var(--vscode-textLink-activeForeground);
             text-decoration: underline;
         }
+
+        /* Progress bar styles */
+        .progress-container {
+            width: 100%;
+            height: 24px;
+            background: var(--vscode-editor-background);
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 10px 0;
+            position: relative;
+            border: 1px solid var(--vscode-panel-border);
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4caf50 0%, #66bb6a 100%);
+            transition: width 0.5s ease;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .progress-bar.warning {
+            background: linear-gradient(90deg, #ff9800 0%, #ffa726 100%);
+        }
+
+        .progress-bar.over-limit {
+            background: linear-gradient(90deg, #f44336 0%, #ef5350 100%);
+        }
+
+        .progress-text {
+            position: absolute;
+            width: 100%;
+            text-align: center;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--vscode-foreground);
+            line-height: 24px;
+            z-index: 1;
+        }
+
+        .progress-label {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 4px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        /* Billable/Non-billable indicators */
+        .time-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 600;
+            margin-left: 5px;
+        }
+
+        .time-badge.billable {
+            background: #4caf50;
+            color: white;
+        }
+
+        .time-badge.non-billable {
+            background: #757575;
+            color: white;
+        }
+
+        /* Tooltip styles */
+        .tooltip {
+            position: relative;
+            cursor: help;
+        }
+
+        .tooltip .tooltiptext {
+            visibility: hidden;
+            width: 280px;
+            background-color: var(--vscode-editorHoverWidget-background);
+            color: var(--vscode-editorHoverWidget-foreground);
+            border: 1px solid var(--vscode-editorHoverWidget-border);
+            text-align: left;
+            border-radius: 6px;
+            padding: 10px;
+            position: absolute;
+            z-index: 1000;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -140px;
+            font-size: 12px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+
+        .tooltip .tooltiptext::after {
+            content: "";
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            margin-left: -5px;
+            border-width: 5px;
+            border-style: solid;
+            border-color: var(--vscode-editorHoverWidget-border) transparent transparent transparent;
+        }
+
+        .tooltip:hover .tooltiptext {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .tooltip-section {
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
+        .tooltip-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .tooltip-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: var(--vscode-foreground);
+        }
+
+        .tooltip-item {
+            font-size: 11px;
+            margin: 2px 0;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        /* Milestone indicators */
+        .milestone-indicator {
+            font-size: 11px;
+            padding: 4px 8px;
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            border-radius: 3px;
+            margin-top: 5px;
+            display: inline-block;
+        }
+
+        .milestone-indicator.achieved {
+            background: #4caf50;
+            color: white;
+        }
     </style>
 </head>
 <body>
@@ -341,10 +507,17 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         </div>
 
         <div class="section">
-            <h2>Today's Total</h2>
-            <div class="status">
-                <div class="time-value" id="todayTotal">0h 0m</div>
+            <h2>Today's Progress</h2>
+            <div class="progress-label">
+                <span>Today's Total: <span id="todayTotal">0h 0m</span></span>
+                <span>Goal: <span id="goalTime">8h 0m</span></span>
             </div>
+            <div class="progress-container">
+                <div class="progress-bar" id="progressBar" style="width: 0%;">
+                </div>
+                <div class="progress-text" id="progressText">0%</div>
+            </div>
+            <div id="milestoneIndicator"></div>
         </div>
 
         <div class="section">
@@ -406,11 +579,14 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             // Update buttons
             updateButtons(status.state);
 
-            // Update today's total
-            updateTodayTotal(status.todayTotal);
+            // Update today's total and progress
+            updateTodayProgress(status.todayTotal, status.expectedWorkingSeconds || 28800);
 
-            // Update project list
-            updateProjectList(status.todaySummaries || []);
+            // Update project list with tooltips and color coding
+            updateProjectList(status.todaySummaries || [], status.todayEntries || []);
+
+            // Update milestone indicators
+            updateMilestones(status.todayTotal);
         }
 
         function updateTimer(seconds) {
@@ -448,14 +624,54 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             }
         }
 
-        function updateTodayTotal(seconds) {
+        function updateTodayProgress(seconds, goalSeconds) {
             const hours = Math.floor(seconds / 3600);
             const minutes = Math.floor((seconds % 3600) / 60);
 
             document.getElementById('todayTotal').textContent = hours + 'h ' + minutes + 'm';
+
+            // Update goal display
+            const goalHours = Math.floor(goalSeconds / 3600);
+            const goalMinutes = Math.floor((goalSeconds % 3600) / 60);
+            document.getElementById('goalTime').textContent = goalHours + 'h ' + goalMinutes + 'm';
+
+            // Calculate progress percentage
+            const percentage = Math.min(Math.round((seconds / goalSeconds) * 100), 100);
+            const actualPercentage = Math.round((seconds / goalSeconds) * 100);
+
+            // Update progress bar
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = percentage + '%';
+
+            // Color code based on progress
+            progressBar.className = 'progress-bar';
+            if (actualPercentage >= 100) {
+                progressBar.className = 'progress-bar over-limit';
+            } else if (percentage >= 80) {
+                progressBar.className = 'progress-bar warning';
+            }
+
+            // Update progress text
+            document.getElementById('progressText').textContent = actualPercentage + '%';
         }
 
-        function updateProjectList(summaries) {
+        function updateMilestones(seconds) {
+            const milestoneDiv = document.getElementById('milestoneIndicator');
+            const hours = seconds / 3600;
+
+            let milestoneText = '';
+            if (hours >= 8) {
+                milestoneText = '<span class="milestone-indicator achieved">Full Day Complete! 🎉</span>';
+            } else if (hours >= 4) {
+                milestoneText = '<span class="milestone-indicator achieved">Half Day Milestone! ⭐</span>';
+            } else if (hours >= 2) {
+                milestoneText = '<span class="milestone-indicator achieved">2 Hour Milestone! 💪</span>';
+            }
+
+            milestoneDiv.innerHTML = milestoneText;
+        }
+
+        function updateProjectList(summaries, entries) {
             const list = document.getElementById('projectList');
 
             if (summaries.length === 0) {
@@ -467,18 +683,91 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 const hours = Math.floor(summary.total_duration / 3600);
                 const minutes = Math.floor((summary.total_duration % 3600) / 60);
 
+                // Get entries for this project
+                const projectEntries = entries.filter(e => e.project_id === summary.project_id);
+
+                // Calculate billable vs non-billable
+                let billableTime = 0;
+                let nonBillableTime = 0;
+                projectEntries.forEach(entry => {
+                    if (entry.is_billable) {
+                        billableTime += entry.duration || 0;
+                    } else {
+                        nonBillableTime += entry.duration || 0;
+                    }
+                });
+
+                const hasBillable = billableTime > 0;
+                const hasNonBillable = nonBillableTime > 0;
+
+                // Generate tooltip content
+                const tooltipContent = generateTooltip(summary, projectEntries, billableTime, nonBillableTime);
+
                 return \`
-                    <li class="project-item">
+                    <li class="project-item tooltip">
                         <div class="project-item-info">
-                            <div class="project-item-name">\${summary.project_name}</div>
+                            <div class="project-item-name">
+                                \${summary.project_name}
+                                \${hasBillable ? '<span class="time-badge billable">$</span>' : ''}
+                                \${hasNonBillable && hasBillable ? '<span class="time-badge non-billable">-</span>' : ''}
+                            </div>
                             <div class="project-item-time">\${hours}h \${minutes}m</div>
                         </div>
                         <button class="project-switch-btn" onclick="switchToProject(\${summary.project_id})">
                             Switch
                         </button>
+                        <span class="tooltiptext">\${tooltipContent}</span>
                     </li>
                 \`;
             }).join('');
+        }
+
+        function generateTooltip(summary, entries, billableTime, nonBillableTime) {
+            let html = '<div class="tooltip-section">';
+            html += \`<div class="tooltip-title">\${summary.project_name}</div>\`;
+            html += \`<div class="tooltip-item">Sessions: \${entries.length}</div>\`;
+            html += '</div>';
+
+            if (billableTime > 0 || nonBillableTime > 0) {
+                html += '<div class="tooltip-section">';
+                html += '<div class="tooltip-title">Time Breakdown</div>';
+
+                if (billableTime > 0) {
+                    const bHours = Math.floor(billableTime / 3600);
+                    const bMins = Math.floor((billableTime % 3600) / 60);
+                    html += \`<div class="tooltip-item">💰 Billable: \${bHours}h \${bMins}m</div>\`;
+                }
+
+                if (nonBillableTime > 0) {
+                    const nbHours = Math.floor(nonBillableTime / 3600);
+                    const nbMins = Math.floor((nonBillableTime % 3600) / 60);
+                    html += \`<div class="tooltip-item">⚪ Non-billable: \${nbHours}h \${nbMins}m</div>\`;
+                }
+
+                html += '</div>';
+            }
+
+            if (entries.length > 0) {
+                html += '<div class="tooltip-section">';
+                html += '<div class="tooltip-title">Recent Sessions</div>';
+
+                entries.slice(0, 3).forEach(entry => {
+                    const start = new Date(entry.start_time);
+                    const startTime = start.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                    const duration = entry.duration || 0;
+                    const dMins = Math.floor(duration / 60);
+
+                    html += \`<div class="tooltip-item">\${startTime} - \${dMins}m\`;
+                    if (entry.notes) {
+                        html += \` (\${entry.notes.substring(0, 20)}...)\`;
+                    }
+                    html += '</div>';
+                });
+
+                html += '</div>';
+            }
+
+            return html;
         }
 
         function startTracking() {
