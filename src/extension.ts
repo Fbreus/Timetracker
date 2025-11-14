@@ -1275,7 +1275,7 @@ function getTimeEntriesHtml(): string {
 
                 <div class="form-group">
                     <label for="synergyActivityType">Activity Type</label>
-                    <input type="text" id="synergyActivityType" placeholder="e.g., Development, Testing, Meeting">
+                    <input type="text" id="synergyActivityType" value="Development" placeholder="e.g., Development, Testing, Meeting">
                     <div class="help-text">Type of work performed</div>
                 </div>
 
@@ -1376,8 +1376,15 @@ function getTimeEntriesHtml(): string {
             const startDate = new Date(entry.start_time);
             document.getElementById('synergyDate').value = startDate.toISOString().split('T')[0];
 
-            const hours = (entry.duration || 0) / 3600;
+            // Calculate hours rounded to 15-minute increments
+            // 15 min = 0.15, 30 min = 0.30, 45 min = 0.45, etc.
+            const totalMinutes = Math.floor((entry.duration || 0) / 60);
+            const roundedMinutes = Math.round(totalMinutes / 15) * 15;
+            const hours = roundedMinutes / 100;
             document.getElementById('synergyHours').value = hours.toFixed(2);
+
+            // Set default activity type
+            document.getElementById('synergyActivityType').value = 'Development';
 
             if (entry.notes) {
                 document.getElementById('synergyDescription').value = entry.notes;
