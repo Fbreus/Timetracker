@@ -12,6 +12,7 @@ import { SynergyIntegration } from './services/synergyIntegration';
 import { SynergyApiService } from './services/synergyApiService';
 import { PomodoroTimer, PomodoroPhase } from './tracking/pomodoroTimer';
 import { RecentProjectsManager } from './tracking/recentProjects';
+import { ProjectMapper } from './services/projectMapper';
 
 let db: TimeTrackerDatabase;
 let timeTracker: TimeTracker;
@@ -931,12 +932,23 @@ function sendTimeEntriesData(panel: vscode.WebviewPanel): void {
         }
     });
 
+    // Get Synergy projects for dropdown
+    const synergyProjects = synergyIntegration.getSynergyProjects().map(p => {
+        const metadata = ProjectMapper.extractSynergyMetadata(p);
+        return {
+            projectNr: metadata?.projectNr || '',
+            name: p.name,
+            customerName: p.category || ''
+        };
+    });
+
     panel.webview.postMessage({
         command: 'updateData',
         entries: entries.map(e => ({
             ...e,
             projectName: projects.get(e.project_id) || 'Unknown'
-        }))
+        })),
+        synergyProjects: synergyProjects
     });
 }
 
@@ -1268,8 +1280,10 @@ function getTimeEntriesHtml(): string {
                 </div>
 
                 <div class="form-group">
-                    <label for="synergyProjectCode">Project Code</label>
-                    <input type="text" id="synergyProjectCode" placeholder="e.g., PROJ-123">
+                    <label for="synergyProjectCode">Project Code *</label>
+                    <select id="synergyProjectCode" required>
+                        <option value="">-- Select a project --</option>
+                    </select>
                     <div class="help-text">Project or task code in Synergy</div>
                 </div>
 
@@ -1310,14 +1324,32 @@ function getTimeEntriesHtml(): string {
     <script>
         const vscode = acquireVsCodeApi();
         let allEntries = [];
+        let synergyProjects = [];
 
         window.addEventListener('message', event => {
             const message = event.data;
             if (message.command === 'updateData') {
                 allEntries = message.entries;
+                synergyProjects = message.synergyProjects || [];
                 renderEntries(message.entries);
+                populateProjectDropdown();
             }
         });
+
+        function populateProjectDropdown() {
+            const projectSelect = document.getElementById('synergyProjectCode');
+
+            // Clear existing options except the first one
+            projectSelect.innerHTML = '<option value="">-- Select a project --</option>';
+
+            // Add Synergy projects to dropdown
+            synergyProjects.forEach(project => {
+                const option = document.createElement('option');
+                option.value = project.projectNr;
+                option.textContent = \`\${project.projectNr} - \${project.name}\`;
+                projectSelect.appendChild(option);
+            });
+        }
 
         function renderEntries(entries) {
             const content = document.getElementById('content');
