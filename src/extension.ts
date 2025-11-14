@@ -1383,6 +1383,80 @@ function getTimeEntriesHtml(): string {
             });
         }
 
+        function populateProjectDropdownSmart(entryProjectName) {
+            const projectSelect = document.getElementById('synergyProjectCode');
+
+            // Clear existing options
+            projectSelect.innerHTML = '<option value="">-- Select a project --</option>';
+
+            if (synergyProjects.length === 0) {
+                return;
+            }
+
+            // Extract keywords from entry project name (split by space, dash, underscore, etc.)
+            const keywords = entryProjectName
+                .toLowerCase()
+                .split(/[\s\-_\.\/\\]+/)
+                .filter(word => word.length > 2); // Only use words longer than 2 characters
+
+            // Score each project based on keyword matches
+            const scoredProjects = synergyProjects.map(project => {
+                const projectText = \`\${project.projectNr} \${project.name}\`.toLowerCase();
+                let score = 0;
+
+                // Check for exact match
+                if (projectText.includes(entryProjectName.toLowerCase())) {
+                    score += 100;
+                }
+
+                // Check for keyword matches
+                keywords.forEach(keyword => {
+                    if (projectText.includes(keyword)) {
+                        score += 10;
+                    }
+                    // Bonus for match at start of word
+                    const regex = new RegExp(\`\\\\b\${keyword}\`, 'i');
+                    if (regex.test(projectText)) {
+                        score += 5;
+                    }
+                });
+
+                return { ...project, score };
+            });
+
+            // Sort by score (highest first), then alphabetically
+            scoredProjects.sort((a, b) => {
+                if (b.score !== a.score) {
+                    return b.score - a.score;
+                }
+                return a.name.localeCompare(b.name);
+            });
+
+            // Add projects to dropdown
+            scoredProjects.forEach((project, index) => {
+                const option = document.createElement('option');
+                option.value = project.projectNr;
+
+                // Add visual separator after matched projects
+                if (index === 0 && project.score > 0) {
+                    option.textContent = \`⭐ \${project.projectNr} - \${project.name}\`;
+                } else if (index > 0 && scoredProjects[index - 1].score > 0 && project.score === 0) {
+                    // Add separator option
+                    const separator = document.createElement('option');
+                    separator.disabled = true;
+                    separator.textContent = '─────────────────────';
+                    projectSelect.appendChild(separator);
+                    option.textContent = \`\${project.projectNr} - \${project.name}\`;
+                } else if (project.score > 0) {
+                    option.textContent = \`⭐ \${project.projectNr} - \${project.name}\`;
+                } else {
+                    option.textContent = \`\${project.projectNr} - \${project.name}\`;
+                }
+
+                projectSelect.appendChild(option);
+            });
+        }
+
         function renderEntries(entries) {
             const content = document.getElementById('content');
 
@@ -1547,6 +1621,9 @@ function getTimeEntriesHtml(): string {
 
             // Store the entry ID in hidden field
             document.getElementById('selectedEntryId').value = entryId;
+
+            // Populate project dropdown with smart sorting based on entry project name
+            populateProjectDropdownSmart(entry.projectName);
 
             // Auto-fill form fields
             const startDate = new Date(entry.start_time);
