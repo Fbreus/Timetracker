@@ -1366,10 +1366,14 @@ function getTimeEntriesHtml(): string {
                 return;
             }
 
+            // Group entries by project and date
+            const grouped = groupEntriesByProjectAndDate(entries);
+
             content.innerHTML = \`
                 <table>
                     <thead>
                         <tr>
+                            <th>Date</th>
                             <th>Project</th>
                             <th>Start Time</th>
                             <th>End Time</th>
@@ -1379,18 +1383,18 @@ function getTimeEntriesHtml(): string {
                         </tr>
                     </thead>
                     <tbody>
-                        \${entries.map(entry => \`
+                        \${grouped.map(group => \`
                             <tr>
-                                <td>\${entry.projectName}</td>
-                                <td>\${formatDateTime(entry.start_time)}</td>
-                                <td>\${entry.end_time ? formatDateTime(entry.end_time) : 'In progress'}</td>
-                                <td>\${formatDuration(entry.duration || 0)}</td>
-                                <td>\${entry.notes || '-'}</td>
+                                <td>\${formatDate(group.date)}</td>
+                                <td>\${group.projectName}</td>
+                                <td>\${formatTime(group.startTime)}</td>
+                                <td>\${formatTime(group.endTime)}</td>
+                                <td>\${formatDuration(group.totalDuration)}</td>
+                                <td>\${group.notes || '-'}</td>
                                 <td>
                                     <div class="actions">
-                                        <button onclick="editEntry(\${entry.id})">Edit</button>
-                                        <button onclick="openSynergyModal(\${entry.id})">Submit to Synergy</button>
-                                        <button class="delete" onclick="deleteEntry(\${entry.id})">Delete</button>
+                                        <button onclick="openSynergyModal(\${group.entryIds[0]}, \${group.totalDuration})">Submit to Synergy</button>
+                                        <button class="delete" onclick="deleteGroupedEntries(\${JSON.stringify(group.entryIds).replace(/"/g, '&quot;')})">Delete All</button>
                                     </div>
                                 </td>
                             </tr>
@@ -1400,7 +1404,66 @@ function getTimeEntriesHtml(): string {
             \`;
         }
 
-        function openSynergyModal(entryId) {
+        function groupEntriesByProjectAndDate(entries) {
+            const groups = {};
+
+            entries.forEach(entry => {
+                const date = new Date(entry.start_time).toISOString().split('T')[0];
+                const key = \`\${date}_\${entry.project_id}\`;
+
+                if (!groups[key]) {
+                    groups[key] = {
+                        date: date,
+                        projectId: entry.project_id,
+                        projectName: entry.projectName,
+                        startTime: entry.start_time,
+                        endTime: entry.end_time,
+                        totalDuration: 0,
+                        notes: [],
+                        entryIds: []
+                    };
+                }
+
+                // Track earliest start time
+                if (new Date(entry.start_time) < new Date(groups[key].startTime)) {
+                    groups[key].startTime = entry.start_time;
+                }
+
+                // Track latest end time
+                if (entry.end_time && (!groups[key].endTime || new Date(entry.end_time) > new Date(groups[key].endTime))) {
+                    groups[key].endTime = entry.end_time;
+                }
+
+                // Sum durations
+                groups[key].totalDuration += (entry.duration || 0);
+
+                // Collect notes
+                if (entry.notes && entry.notes.trim() !== '') {
+                    groups[key].notes.push(entry.notes);
+                }
+
+                // Track entry IDs
+                groups[key].entryIds.push(entry.id);
+            });
+
+            // Convert to array and format notes
+            return Object.values(groups).map(group => ({
+                ...group,
+                notes: group.notes.length > 0 ? group.notes.join('; ') : null
+            })).sort((a, b) => new Date(b.date) - new Date(a.date) || new Date(b.startTime) - new Date(a.startTime));
+        }
+
+        function deleteGroupedEntries(entryIds) {
+            if (!confirm(\`Delete all \${entryIds.length} entries for this project/day?\`)) {
+                return;
+            }
+
+            entryIds.forEach(id => {
+                vscode.postMessage({ command: 'deleteEntry', entryId: id });
+            });
+        }
+
+        function openSynergyModal(entryId, totalDuration) {
             // Find the entry
             const entry = allEntries.find(e => e.id === entryId);
             if (!entry) {
@@ -1415,9 +1478,12 @@ function getTimeEntriesHtml(): string {
             const startDate = new Date(entry.start_time);
             document.getElementById('synergyDate').value = startDate.toISOString().split('T')[0];
 
+            // Use totalDuration if provided (for grouped entries), otherwise use entry duration
+            const duration = totalDuration !== undefined ? totalDuration : (entry.duration || 0);
+
             // Calculate hours rounded UP to 15-minute increments
             // Always round up: 1-15 min = 0.25, 16-30 min = 0.50, 31-45 min = 0.75, etc.
-            const totalMinutes = Math.floor((entry.duration || 0) / 60);
+            const totalMinutes = Math.floor(duration / 60);
             const roundedMinutes = Math.ceil(totalMinutes / 15) * 15;
             const hours = roundedMinutes / 60;
             document.getElementById('synergyHours').value = hours.toFixed(2);
@@ -1435,6 +1501,7 @@ function getTimeEntriesHtml(): string {
 
             // Show preview
             const previewDiv = document.getElementById('entryPreview');
+            const displayDuration = totalDuration !== undefined ? totalDuration : (entry.duration || 0);
             previewDiv.innerHTML = \`
                 <div class="entry-preview">
                     <div class="entry-preview-row">
@@ -1442,16 +1509,12 @@ function getTimeEntriesHtml(): string {
                         <span class="entry-preview-value">\${entry.projectName}</span>
                     </div>
                     <div class="entry-preview-row">
-                        <span class="entry-preview-label">Start:</span>
-                        <span class="entry-preview-value">\${formatDateTime(entry.start_time)}</span>
+                        <span class="entry-preview-label">Date:</span>
+                        <span class="entry-preview-value">\${formatDate(entry.start_time)}</span>
                     </div>
                     <div class="entry-preview-row">
-                        <span class="entry-preview-label">End:</span>
-                        <span class="entry-preview-value">\${entry.end_time ? formatDateTime(entry.end_time) : 'In progress'}</span>
-                    </div>
-                    <div class="entry-preview-row">
-                        <span class="entry-preview-label">Duration:</span>
-                        <span class="entry-preview-value">\${formatDuration(entry.duration || 0)}</span>
+                        <span class="entry-preview-label">Total Duration:</span>
+                        <span class="entry-preview-value">\${formatDuration(displayDuration)}</span>
                     </div>
                     <div class="entry-preview-row">
                         <span class="entry-preview-label">Billable:</span>
@@ -1508,6 +1571,16 @@ function getTimeEntriesHtml(): string {
             const hours = Math.floor(seconds / 3600);
             const minutes = Math.floor((seconds % 3600) / 60);
             return \`\${hours}h \${minutes}m\`;
+        }
+
+        function formatDate(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString();
+        }
+
+        function formatTime(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
         }
 
         function editEntry(entryId) {
