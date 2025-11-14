@@ -1397,13 +1397,13 @@ function getTimeEntriesHtml(): string {
             console.log('Entry project name:', entryProjectName);
 
             // Normalize the entry name for better matching (remove special chars)
-            const normalizedEntry = entryProjectName.toLowerCase().replace(/[\s\-_\.\/\\]+/g, '');
+            const normalizedEntry = entryProjectName.toLowerCase().replace(/[\\s\\-_\\.\\/\\\\]+/g, '');
             const entryLower = entryProjectName.toLowerCase();
 
             // Extract keywords from entry project name (split by space, dash, underscore, etc.)
             const keywords = entryProjectName
                 .toLowerCase()
-                .split(/[\s\-_\.\/\\]+/)
+                .split(/[\\s\\-_\\.\\/\\\\]+/)
                 .filter(word => word.length > 0); // Keep all non-empty words (including single letters)
 
             console.log('Normalized entry:', normalizedEntry);
@@ -1414,7 +1414,7 @@ function getTimeEntriesHtml(): string {
                 // Create the full display text as it will appear in dropdown
                 const displayText = \`\${project.projectNr} - \${project.name}\`;
                 const projectText = displayText.toLowerCase();
-                const normalizedProject = projectText.replace(/[\s\-_\.\/\\]+/g, '');
+                const normalizedProject = projectText.replace(/[\\s\\-_\\.\\/\\\\]+/g, '');
                 let score = 0;
 
                 // Check for exact match in normalized form (ignoring separators like spaces, dashes)
