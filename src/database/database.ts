@@ -967,6 +967,49 @@ export class TimeTrackerDatabase {
         this.saveToFile();
     }
 
+    reassignEntryToNewDate(entryId: number, newStartTime: string, newEndTime?: string): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        // Get the entry to know the old group
+        const entry = this.getTimeEntryById(entryId);
+        if (!entry) {
+            throw new Error('Entry not found');
+        }
+
+        const oldGroupId = entry.group_id;
+
+        // Extract new date from new start time
+        const newEntryDate = newStartTime.split('T')[0];
+
+        // Get or create group for the new date
+        const newGroupId = this.getOrCreateGroup(
+            entry.project_id,
+            entry.customer_id,
+            newEntryDate,
+            entry.task_code
+        );
+
+        // Update the entry with new times and group
+        this.db.run(
+            `UPDATE time_entries
+             SET start_time = ?, end_time = ?, group_id = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?`,
+            [newStartTime, newEndTime || null, newGroupId, entryId]
+        );
+
+        // Recalculate totals for the old group (will auto-delete if empty)
+        if (oldGroupId) {
+            this.recalculateGroupTotals(oldGroupId);
+        }
+
+        // Recalculate totals for the new group
+        this.recalculateGroupTotals(newGroupId);
+
+        this.saveToFile();
+    }
+
     // Synergy sync operations
     getUnsyncedTimeEntries(): TimeEntry[] {
         if (!this.db) {

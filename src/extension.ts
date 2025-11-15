@@ -817,6 +817,9 @@ async function viewTimeEntries(context: vscode.ExtensionContext): Promise<void> 
                     await deleteTimeEntry(message.entryId);
                     sendTimeEntriesData(panel); // Refresh
                     break;
+                case 'deleteGroupedEntries':
+                    await deleteGroupedEntries(panel, message.entryIds);
+                    break;
                 case 'submitToSynergy':
                     await handleSynergySubmission(message.data);
                     break;
@@ -1098,6 +1101,26 @@ async function deleteTimeEntry(entryId: number): Promise<void> {
     if (confirm === 'Yes') {
         db.deleteTimeEntry(entryId);
         vscode.window.showInformationMessage('Time entry deleted');
+    }
+}
+
+async function deleteGroupedEntries(panel: vscode.WebviewPanel, entryIds: number[]): Promise<void> {
+    const confirm = await vscode.window.showQuickPick(['Yes', 'No'], {
+        placeHolder: `Are you sure you want to delete all ${entryIds.length} entries for this project/day?`
+    });
+
+    if (confirm === 'Yes') {
+        let deletedCount = 0;
+        for (const entryId of entryIds) {
+            try {
+                db.deleteTimeEntry(entryId);
+                deletedCount++;
+            } catch (error) {
+                console.error(`Failed to delete entry ${entryId}:`, error);
+            }
+        }
+        vscode.window.showInformationMessage(`${deletedCount} time entries deleted`);
+        sendTimeEntriesData(panel); // Refresh the entries view
     }
 }
 
@@ -1697,13 +1720,8 @@ function getTimeEntriesHtml(): string {
         }
 
         function deleteGroupedEntries(entryIds) {
-            if (!confirm(\`Delete all \${entryIds.length} entries for this project/day?\`)) {
-                return;
-            }
-
-            entryIds.forEach(id => {
-                vscode.postMessage({ command: 'deleteEntry', entryId: id });
-            });
+            // Send message to extension to handle confirmation and deletion
+            vscode.postMessage({ command: 'deleteGroupedEntries', entryIds: entryIds });
         }
 
         function openSynergyModal(entryId, totalDuration) {
@@ -2869,11 +2887,15 @@ async function moveGroupEntry(panel: vscode.WebviewPanel, entryId: number, daysD
             newEnd.setDate(newEnd.getDate() + daysDiff);
         }
 
-        // Update the entry
-        db.updateTimeEntry(entryId, {
-            start_time: newStart.toISOString(),
-            end_time: newEnd ? newEnd.toISOString() : entry.end_time
-        });
+        // Reassign entry to the correct group for the new date
+        db.reassignEntryToNewDate(
+            entryId,
+            newStart.toISOString(),
+            newEnd ? newEnd.toISOString() : undefined
+        );
+
+        // Refresh the calendar to show the updated grouping
+        refreshCalendarView(panel);
 
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to move group entry: ${error}`);
