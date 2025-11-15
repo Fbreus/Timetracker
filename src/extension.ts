@@ -3553,7 +3553,6 @@ function getCalendarHtml(): string {
                 if (document.getElementById('daySun').checked) selectedDays.push(0);
 
                 if (selectedDays.length === 0) {
-                    alert('Please select at least one day of the week.');
                     return;
                 }
 
@@ -3563,14 +3562,10 @@ function getCalendarHtml(): string {
                 const duration = (endH * 3600 + endM * 60) - (startH * 3600 + startM * 60);
 
                 if (duration <= 0) {
-                    alert('End time must be after start time.');
                     return;
                 }
 
                 const totalEntries = weeks * selectedDays.length;
-                if (!confirm(\`This will create \${totalEntries} entries over \${weeks} weeks. Continue?\`)) {
-                    return;
-                }
 
                 // Generate entries
                 for (let week = 0; week < weeks; week++) {
@@ -3605,7 +3600,6 @@ function getCalendarHtml(): string {
                 }
 
                 closeRecurringModal();
-                alert(\`Created \${totalEntries} recurring entries!\`);
 
                 // Refresh calendar after a short delay
                 setTimeout(() => {
@@ -3814,7 +3808,7 @@ function getCalendarHtml(): string {
 
         function deleteEntry() {
             const entryId = document.getElementById('entryId').value;
-            if (entryId && confirm('Are you sure you want to delete this time entry?')) {
+            if (entryId) {
                 vscode.postMessage({
                     command: 'deleteEntry',
                     id: parseInt(entryId)
@@ -4085,7 +4079,6 @@ function getCalendarHtml(): string {
                 const name = prompt('Enter template name:');
                 if (!name) return;
 
-                alert('Please select an existing entry first, then open Templates and click "Save Current Entry as Template"');
                 return;
             }
 
@@ -4109,7 +4102,6 @@ function getCalendarHtml(): string {
             templates.push(template);
             saveTemplates();
             renderTemplates();
-            alert('Template saved!');
         }
 
         function applyTemplate(index) {
@@ -4137,11 +4129,9 @@ function getCalendarHtml(): string {
         }
 
         function deleteTemplate(index) {
-            if (confirm('Delete this template?')) {
-                templates.splice(index, 1);
-                saveTemplates();
-                renderTemplates();
-            }
+            templates.splice(index, 1);
+            saveTemplates();
+            renderTemplates();
         }
 
         // Copy Week Functionality
@@ -4169,11 +4159,6 @@ function getCalendarHtml(): string {
             });
 
             if (weekEntries.length === 0) {
-                alert('No entries found in the current week to copy (synced entries are excluded).');
-                return;
-            }
-
-            if (!confirm(\`Copy \${weekEntries.length} entries from this week to next week?\`)) {
                 return;
             }
 
