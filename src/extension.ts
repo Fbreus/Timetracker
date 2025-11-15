@@ -3980,6 +3980,13 @@ function getCalendarHtml(): string {
         </div>
     </div>
 
+    <!-- Context Menu for Event Right-Click -->
+    <div id="contextMenu" style="display: none; position: absolute; background: var(--vscode-menu-background); border: 1px solid var(--vscode-menu-border); border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); z-index: 10000; min-width: 120px;">
+        <div onclick="contextMenuDelete()" style="padding: 8px 16px; cursor: pointer; color: var(--vscode-menu-foreground);" onmouseover="this.style.background='var(--vscode-menu-selectionBackground)'" onmouseout="this.style.background='transparent'">
+            🗑️ Delete Entry
+        </div>
+    </div>
+
     <script>
         const vscode = acquireVsCodeApi();
         let calendar;
@@ -3990,6 +3997,7 @@ function getCalendarHtml(): string {
         let templates = [];
         let duplicateEntryId = null;
         let applyTemplateIndex = null;
+        let contextMenuEvent = null;
 
         document.addEventListener('DOMContentLoaded', function() {
             const calendarEl = document.getElementById('calendar');
@@ -4220,13 +4228,63 @@ function getCalendarHtml(): string {
         function handleEventClick(info) {
             selectedEvent = info.event;
 
-            // Check if this is a grouped entry
+            // Handle right-click for context menu (single entries only)
+            if (info.jsEvent.button === 2 || info.jsEvent.which === 3) {
+                info.jsEvent.preventDefault();
+
+                // Only show context menu for single entries, not groups
+                if (!info.event.extendedProps.isGroup) {
+                    // Check if entry can be deleted (not synced/submitted)
+                    const canDelete = !info.event.extendedProps.synergySynced && !info.event.extendedProps.synergySubmitted;
+                    if (canDelete) {
+                        contextMenuEvent = info.event;
+                        showContextMenu(info.jsEvent.pageX, info.jsEvent.pageY);
+                    }
+                }
+                return;
+            }
+
+            // Left-click: open edit modal or grouped entries modal
             if (info.event.extendedProps.isGroup) {
                 showGroupedEntriesModal(info.event);
             } else {
                 openModal('Edit Time Entry', null, info.event);
             }
         }
+
+        function showContextMenu(x, y) {
+            const menu = document.getElementById('contextMenu');
+            menu.style.display = 'block';
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
+        }
+
+        function hideContextMenu() {
+            document.getElementById('contextMenu').style.display = 'none';
+            contextMenuEvent = null;
+        }
+
+        function contextMenuDelete() {
+            if (contextMenuEvent) {
+                vscode.postMessage({
+                    command: 'deleteEntry',
+                    id: parseInt(contextMenuEvent.id)
+                });
+            }
+            hideContextMenu();
+        }
+
+        // Hide context menu when clicking anywhere else
+        document.addEventListener('click', function() {
+            hideContextMenu();
+        });
+
+        // Prevent default context menu
+        document.addEventListener('contextmenu', function(e) {
+            if (e.target.closest('.fc-event')) {
+                e.preventDefault();
+            }
+        });
 
         function handleEventDrop(info) {
             const event = info.event;
@@ -4499,7 +4557,12 @@ function getCalendarHtml(): string {
                 }
 
                 const canEdit = !entry.synergySynced && !entry.synergySubmitted;
-                const editButton = canEdit ? \`<button onclick="editGroupEntry(\${entry.id})" style="padding: 4px 12px; margin-top: 8px;">Edit Entry</button>\` : '';
+                const actionButtons = canEdit ? \`
+                    <div style="display: flex; gap: 8px;">
+                        <button onclick="editGroupEntry(\${entry.id})" style="padding: 4px 12px; margin-top: 8px;">Edit Entry</button>
+                        <button onclick="deleteGroupEntry(\${entry.id})" style="padding: 4px 12px; margin-top: 8px; background: var(--vscode-errorForeground); color: white;">Delete</button>
+                    </div>
+                \` : '';
 
                 return \`
                     <div style="padding: 12px; margin-bottom: 8px; background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px;">
@@ -4515,7 +4578,7 @@ function getCalendarHtml(): string {
                                 <span style="color: var(--vscode-descriptionForeground);">Billable: </span>
                                 <span style="color: \${entry.isBillable ? 'var(--vscode-charts-green)' : 'var(--vscode-charts-red)'};">\${entry.isBillable ? 'Yes' : 'No'}</span>
                             </div>
-                            \${editButton}
+                            \${actionButtons}
                         </div>
                     </div>
                 \`;
@@ -4536,6 +4599,17 @@ function getCalendarHtml(): string {
             });
 
             // Close grouped modal
+            closeGroupedEntriesModal();
+        }
+
+        function deleteGroupEntry(entryId) {
+            // Send delete command to backend
+            vscode.postMessage({
+                command: 'deleteEntry',
+                id: entryId
+            });
+
+            // Close grouped modal and refresh calendar
             closeGroupedEntriesModal();
         }
 
