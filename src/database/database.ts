@@ -996,6 +996,47 @@ export class TimeTrackerDatabase {
         this.saveToFile();
     }
 
+    // Group sync operations (new group-based architecture)
+    getUnsyncedTimeEntryGroups(): TimeEntryGroup[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT * FROM time_entry_groups WHERE synergy_synced = 0 AND total_duration > 0 ORDER BY entry_date ASC'
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToTimeEntryGroup(result[0].columns, row));
+    }
+
+    markTimeEntryGroupSynced(id: number, synergyId?: string): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run(
+            'UPDATE time_entry_groups SET synergy_synced = 1, synergy_sync_date = CURRENT_TIMESTAMP, synergy_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [synergyId || null, id]
+        );
+        this.saveToFile();
+    }
+
+    markTimeEntryGroupSubmitted(id: number): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        this.db.run(
+            'UPDATE time_entry_groups SET synergy_submitted = 1, synergy_submission_date = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [id]
+        );
+        this.saveToFile();
+    }
+
     // Activity log operations
     createActivityLog(log: ActivityLog): number {
         if (!this.db) {

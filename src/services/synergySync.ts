@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { TimeTrackerDatabase, TimeEntry, Project } from '../database/database';
+import { TimeTrackerDatabase, TimeEntry, TimeEntryGroup, Project } from '../database/database';
 import { SynergyAuthService } from './synergyAuth';
 import {
     SynergyTimeRegistration,
@@ -68,9 +68,57 @@ export class SynergySyncService {
     }
 
     /**
-     * Sync all unsynced time entries
+     * Sync all unsynced time entries (legacy - kept for compatibility)
+     * @deprecated Use syncAllUnsyncedGroups() instead
      */
     public async syncAllUnsyncedEntries(): Promise<SynergySyncResult> {
+        // Redirect to group-based sync
+        return this.syncAllUnsyncedGroups();
+    }
+
+    /**
+     * Sync a single time entry group to Synergy (new group-based architecture)
+     */
+    public async syncTimeEntryGroup(group: TimeEntryGroup): Promise<SynergyRegistrationResponse> {
+        if (!this.authService.isEnabled()) {
+            throw new Error('Synergy integration is not enabled or configured');
+        }
+
+        try {
+            // Get access token
+            const token = await this.authService.getAccessToken();
+
+            // Get project details
+            const project = this.db.getProjectById(group.project_id);
+            if (!project) {
+                throw new Error(`Project not found for group ${group.id}`);
+            }
+
+            // Convert group to Synergy format
+            const registration = this.convertGroupToSynergyRegistration(group, project);
+
+            // Send to Synergy API
+            const result = await this.sendRegistrationToSynergy(token, registration);
+
+            // Mark as synced if successful
+            if (result.success && group.id) {
+                this.db.markTimeEntryGroupSynced(group.id, result.id);
+            }
+
+            return result;
+        } catch (error) {
+            console.error('Error syncing time entry group:', error);
+            return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error'
+            };
+        }
+    }
+
+    /**
+     * Sync all unsynced time entry groups (new group-based architecture)
+     */
+    public async syncAllUnsyncedGroups(): Promise<SynergySyncResult> {
         if (this.isSyncing) {
             throw new Error('Sync already in progress');
         }
@@ -90,32 +138,32 @@ export class SynergySyncService {
         };
 
         try {
-            // Get all unsynced entries
-            const unsyncedEntries = this.db.getUnsyncedTimeEntries();
-            result.entriesProcessed = unsyncedEntries.length;
+            // Get all unsynced groups
+            const unsyncedGroups = this.db.getUnsyncedTimeEntryGroups();
+            result.entriesProcessed = unsyncedGroups.length;
 
-            if (unsyncedEntries.length === 0) {
+            if (unsyncedGroups.length === 0) {
                 return result;
             }
 
-            // Sync each entry
-            for (const entry of unsyncedEntries) {
+            // Sync each group
+            for (const group of unsyncedGroups) {
                 try {
-                    const syncResult = await this.syncTimeEntry(entry);
+                    const syncResult = await this.syncTimeEntryGroup(group);
 
                     if (syncResult.success) {
                         result.entriesSynced++;
                     } else {
                         result.entriesFailed++;
                         result.errors.push({
-                            entryId: entry.id!,
+                            entryId: group.id!,
                             error: syncResult.error || 'Unknown error'
                         });
                     }
                 } catch (error) {
                     result.entriesFailed++;
                     result.errors.push({
-                        entryId: entry.id!,
+                        entryId: group.id!,
                         error: error instanceof Error ? error.message : 'Unknown error'
                     });
                 }
@@ -139,6 +187,7 @@ export class SynergySyncService {
      * Convert a TimeEntry to Synergy registration format
      * NOTE: This is a placeholder implementation. You'll need to adjust this
      * based on the actual Synergy API requirements for time registrations.
+     * @deprecated Use convertGroupToSynergyRegistration() instead
      */
     private convertToSynergyRegistration(entry: TimeEntry, project: Project): SynergyTimeRegistration {
         // Calculate duration in minutes (Synergy might use minutes or hours)
@@ -151,6 +200,42 @@ export class SynergySyncService {
             endTime: entry.end_time || new Date().toISOString(),
             duration: durationMinutes,
             notes: entry.notes
+        };
+    }
+
+    /**
+     * Convert a TimeEntryGroup to Synergy registration format (new group-based architecture)
+     * NOTE: Adjust this based on the actual Synergy API requirements.
+     */
+    private convertGroupToSynergyRegistration(group: TimeEntryGroup, project: Project): SynergyTimeRegistration {
+        // Calculate duration in minutes (Synergy might use minutes or hours)
+        const durationMinutes = Math.round(group.total_duration / 60);
+
+        // Build description with task code if present
+        let description = `Time tracking for ${project.name}`;
+        if (group.task_code) {
+            description += ` [${group.task_code}]`;
+        }
+        if (group.notes) {
+            description += `: ${group.notes}`;
+        }
+
+        // For groups, use the entry date with standard work hours
+        // Synergy typically expects a date + duration rather than exact start/end times for aggregated entries
+        const entryDate = new Date(group.entry_date);
+        const startTime = new Date(entryDate);
+        startTime.setHours(9, 0, 0, 0); // Default to 9 AM start
+
+        const endTime = new Date(startTime);
+        endTime.setMinutes(endTime.getMinutes() + durationMinutes);
+
+        return {
+            projectId: project.name, // Adjust based on how Synergy identifies projects
+            description: description,
+            startTime: startTime.toISOString(),
+            endTime: endTime.toISOString(),
+            duration: durationMinutes,
+            notes: group.notes || `Aggregated time for ${group.entry_date}`
         };
     }
 
@@ -226,16 +311,25 @@ export class SynergySyncService {
     }
 
     /**
-     * Get sync status summary
+     * Get sync status summary (now based on groups)
      */
     public getSyncStatus(): { total: number; synced: number; pending: number } {
-        const unsyncedEntries = this.db.getUnsyncedTimeEntries();
-        const allEntries = this.db.getAllTimeEntries();
+        const unsyncedGroups = this.db.getUnsyncedTimeEntryGroups();
+
+        // Get all groups from the last 90 days to calculate total
+        const ninetyDaysAgo = new Date();
+        ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+        const today = new Date();
+
+        const allRecentGroups = this.db.getTimeEntryGroupsForDateRange(
+            ninetyDaysAgo.toISOString().split('T')[0],
+            today.toISOString().split('T')[0]
+        );
 
         return {
-            total: allEntries.length,
-            synced: allEntries.length - unsyncedEntries.length,
-            pending: unsyncedEntries.length
+            total: allRecentGroups.length,
+            synced: allRecentGroups.length - unsyncedGroups.length,
+            pending: unsyncedGroups.length
         };
     }
 }
