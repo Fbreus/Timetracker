@@ -2771,6 +2771,9 @@ async function showCalendar(context: vscode.ExtensionContext): Promise<void> {
                 case 'deleteEntry':
                     await deleteCalendarTimeEntry(panel, message.id);
                     break;
+                case 'deleteGroup':
+                    await deleteGroupEntries(panel, message.entryIds);
+                    break;
                 case 'duplicateEntry':
                     await duplicateTimeEntry(panel, message.id, message.newDate);
                     break;
@@ -3077,6 +3080,56 @@ async function deleteCalendarTimeEntry(panel: vscode.WebviewPanel, id: number): 
             error: String(error)
         });
         vscode.window.showErrorMessage(`Failed to delete time entry: ${error}`);
+    }
+}
+
+async function deleteGroupEntries(panel: vscode.WebviewPanel, entryIds: number[]): Promise<void> {
+    try {
+        if (!entryIds || entryIds.length === 0) {
+            throw new Error('No entries to delete');
+        }
+
+        // Get the first entry to determine the date range for refresh
+        const firstEntry = db.getTimeEntryById(entryIds[0]);
+
+        let deletedCount = 0;
+        for (const entryId of entryIds) {
+            try {
+                db.deleteTimeEntry(entryId);
+                deletedCount++;
+            } catch (error) {
+                console.error(`Failed to delete entry ${entryId}:`, error);
+            }
+        }
+
+        panel.webview.postMessage({
+            command: 'groupDeleted',
+            success: true,
+            count: deletedCount
+        });
+
+        // Refresh calendar data
+        if (firstEntry) {
+            const startDate = new Date(firstEntry.start_time);
+            startDate.setDate(1);
+            const endDate = new Date(startDate);
+            endDate.setMonth(endDate.getMonth() + 1);
+            sendCalendarData(panel, startDate.toISOString(), endDate.toISOString());
+        }
+
+        // Also refresh entries panel if it's open
+        if (entriesPanel) {
+            sendTimeEntriesData(entriesPanel);
+        }
+
+        vscode.window.showInformationMessage(`${deletedCount} time ${deletedCount === 1 ? 'entry' : 'entries'} deleted successfully`);
+    } catch (error) {
+        panel.webview.postMessage({
+            command: 'groupDeleted',
+            success: false,
+            error: String(error)
+        });
+        vscode.window.showErrorMessage(`Failed to delete group entries: ${error}`);
     }
 }
 
@@ -3981,8 +4034,8 @@ function getCalendarHtml(): string {
     </div>
 
     <!-- Context Menu for Event Right-Click -->
-    <div id="contextMenu" style="display: none; position: absolute; background: var(--vscode-menu-background); border: 1px solid var(--vscode-menu-border); border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); z-index: 10000; min-width: 120px;">
-        <div onclick="contextMenuDelete()" style="padding: 8px 16px; cursor: pointer; color: var(--vscode-menu-foreground);" onmouseover="this.style.background='var(--vscode-menu-selectionBackground)'" onmouseout="this.style.background='transparent'">
+    <div id="contextMenu" style="display: none; position: absolute; background: var(--vscode-menu-background); border: 1px solid var(--vscode-menu-border); border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); z-index: 10000; min-width: 150px;">
+        <div id="contextMenuDeleteText" onclick="contextMenuDelete()" style="padding: 8px 16px; cursor: pointer; color: var(--vscode-errorForeground); font-weight: 500;" onmouseover="this.style.background='var(--vscode-menu-selectionBackground)'" onmouseout="this.style.background='transparent'">
             🗑️ Delete Entry
         </div>
     </div>
@@ -4228,17 +4281,27 @@ function getCalendarHtml(): string {
         function handleEventClick(info) {
             selectedEvent = info.event;
 
-            // Handle right-click for context menu (single entries only)
+            // Handle right-click for context menu
             if (info.jsEvent.button === 2 || info.jsEvent.which === 3) {
                 info.jsEvent.preventDefault();
 
-                // Only show context menu for single entries, not groups
-                if (!info.event.extendedProps.isGroup) {
-                    // Check if entry can be deleted (not synced/submitted)
+                // Check if this is a grouped entry
+                if (info.event.extendedProps.isGroup) {
+                    // Check if any entries in the group can be deleted
+                    const entries = info.event.extendedProps.entries || [];
+                    const hasUndeletableEntries = entries.some(e => e.synergySynced || e.synergySubmitted);
+
+                    if (!hasUndeletableEntries && entries.length > 0) {
+                        contextMenuEvent = info.event;
+                        const entryCount = info.event.extendedProps.entryCount || entries.length;
+                        showContextMenu(info.jsEvent.pageX, info.jsEvent.pageY, true, entryCount);
+                    }
+                } else {
+                    // Single entry
                     const canDelete = !info.event.extendedProps.synergySynced && !info.event.extendedProps.synergySubmitted;
                     if (canDelete) {
                         contextMenuEvent = info.event;
-                        showContextMenu(info.jsEvent.pageX, info.jsEvent.pageY);
+                        showContextMenu(info.jsEvent.pageX, info.jsEvent.pageY, false);
                     }
                 }
                 return;
@@ -4252,8 +4315,16 @@ function getCalendarHtml(): string {
             }
         }
 
-        function showContextMenu(x, y) {
+        function showContextMenu(x, y, isGroup, entryCount) {
             const menu = document.getElementById('contextMenu');
+            const deleteText = document.getElementById('contextMenuDeleteText');
+
+            if (isGroup) {
+                deleteText.textContent = '🗑️ Delete Group (' + entryCount + ' ' + (entryCount === 1 ? 'entry' : 'entries') + ')';
+            } else {
+                deleteText.textContent = '🗑️ Delete Entry';
+            }
+
             menu.style.display = 'block';
             menu.style.left = x + 'px';
             menu.style.top = y + 'px';
@@ -4266,10 +4337,22 @@ function getCalendarHtml(): string {
 
         function contextMenuDelete() {
             if (contextMenuEvent) {
-                vscode.postMessage({
-                    command: 'deleteEntry',
-                    id: parseInt(contextMenuEvent.id)
-                });
+                if (contextMenuEvent.extendedProps.isGroup) {
+                    // Delete all entries in the group
+                    const entryIds = contextMenuEvent.extendedProps.entryIds || [];
+                    if (entryIds.length > 0) {
+                        vscode.postMessage({
+                            command: 'deleteGroup',
+                            entryIds: entryIds
+                        });
+                    }
+                } else {
+                    // Delete single entry
+                    vscode.postMessage({
+                        command: 'deleteEntry',
+                        id: parseInt(contextMenuEvent.id)
+                    });
+                }
             }
             hideContextMenu();
         }
