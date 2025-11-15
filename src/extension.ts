@@ -27,6 +27,8 @@ let synergyIntegration: SynergyIntegration;
 let synergyApi: SynergyApiService;
 let pomodoroTimer: PomodoroTimer;
 let recentProjectsManager: RecentProjectsManager;
+let calendarPanel: vscode.WebviewPanel | undefined;
+let entriesPanel: vscode.WebviewPanel | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Time Tracker extension is activating...');
@@ -799,6 +801,14 @@ async function viewTimeEntries(context: vscode.ExtensionContext): Promise<void> 
             localResourceRoots: [context.extensionUri]
         }
     );
+
+    // Store panel reference
+    entriesPanel = panel;
+
+    // Clear reference when panel is disposed
+    panel.onDidDispose(() => {
+        entriesPanel = undefined;
+    });
 
     panel.webview.html = getTimeEntriesHtml();
 
@@ -2728,6 +2738,14 @@ async function showCalendar(context: vscode.ExtensionContext): Promise<void> {
         }
     );
 
+    // Store panel reference
+    calendarPanel = panel;
+
+    // Clear reference when panel is disposed
+    panel.onDidDispose(() => {
+        calendarPanel = undefined;
+    });
+
     panel.webview.html = getCalendarHtml();
 
     // Handle messages from the webview
@@ -2953,6 +2971,11 @@ async function createTimeEntry(panel: vscode.WebviewPanel, entry: any): Promise<
         endDate.setMonth(endDate.getMonth() + 1);
         sendCalendarData(panel, startDate.toISOString(), endDate.toISOString());
 
+        // Also refresh entries panel if it's open
+        if (entriesPanel) {
+            sendTimeEntriesData(entriesPanel);
+        }
+
         vscode.window.showInformationMessage('Time entry created successfully');
     } catch (error) {
         panel.webview.postMessage({
@@ -2995,6 +3018,11 @@ async function updateTimeEntry(panel: vscode.WebviewPanel, id: number, updates: 
             sendCalendarData(panel, startDate.toISOString(), endDate.toISOString());
         }
 
+        // Also refresh entries panel if it's open
+        if (entriesPanel) {
+            sendTimeEntriesData(entriesPanel);
+        }
+
         vscode.window.showInformationMessage('Time entry updated successfully');
     } catch (error) {
         panel.webview.postMessage({
@@ -3024,6 +3052,11 @@ async function deleteCalendarTimeEntry(panel: vscode.WebviewPanel, id: number): 
             const endDate = new Date(startDate);
             endDate.setMonth(endDate.getMonth() + 1);
             sendCalendarData(panel, startDate.toISOString(), endDate.toISOString());
+        }
+
+        // Also refresh entries panel if it's open
+        if (entriesPanel) {
+            sendTimeEntriesData(entriesPanel);
         }
 
         vscode.window.showInformationMessage('Time entry deleted successfully');
@@ -3072,6 +3105,11 @@ async function moveGroupEntry(panel: vscode.WebviewPanel, entryId: number, daysD
         endDate.setMonth(endDate.getMonth() + 1);
         endDate.setDate(0);
         sendCalendarData(panel, startDate.toISOString(), endDate.toISOString());
+
+        // Also refresh entries panel if it's open
+        if (entriesPanel) {
+            sendTimeEntriesData(entriesPanel);
+        }
 
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to move group entry: ${error}`);
@@ -3124,6 +3162,11 @@ async function duplicateTimeEntry(panel: vscode.WebviewPanel, id: number, newDat
         const endDate = new Date(startDate);
         endDate.setMonth(endDate.getMonth() + 1);
         sendCalendarData(panel, startDate.toISOString(), endDate.toISOString());
+
+        // Also refresh entries panel if it's open
+        if (entriesPanel) {
+            sendTimeEntriesData(entriesPanel);
+        }
 
         vscode.window.showInformationMessage('Time entry duplicated successfully');
     } catch (error) {
