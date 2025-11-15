@@ -2563,6 +2563,12 @@ async function showCalendar(context: vscode.ExtensionContext): Promise<void> {
                 case 'duplicateEntry':
                     await duplicateTimeEntry(panel, message.id, message.newDate);
                     break;
+                case 'moveGroupEntry':
+                    await moveGroupEntry(panel, message.entryId, message.daysDiff);
+                    break;
+                case 'getEntry':
+                    sendSingleEntry(panel, message.id);
+                    break;
                 case 'getProjects':
                     sendProjectsList(panel);
                     break;
@@ -2664,9 +2670,9 @@ function sendCalendarData(panel: vscode.WebviewPanel, startDate: string, endDate
             end: endTime,
             backgroundColor: backgroundColor,
             borderColor: borderColor,
-            editable: false, // Groups are not draggable
-            startEditable: false,
-            durationEditable: false,
+            editable: isEditable, // Groups are draggable if not synced/submitted
+            startEditable: isEditable,
+            durationEditable: false, // Cannot resize groups, only move them
             extendedProps: {
                 isGroup: true,
                 groupKey: groupKey,
@@ -2699,6 +2705,37 @@ function sendCalendarData(panel: vscode.WebviewPanel, startDate: string, endDate
         command: 'updateEvents',
         events
     });
+}
+
+function sendSingleEntry(panel: vscode.WebviewPanel, id: number): void {
+    const entry = db.getTimeEntryById(id);
+    if (entry) {
+        const projects = db.getAllProjects();
+        const customers = db.getAllCustomers();
+        const project = projects.find(p => p.id === entry.project_id);
+        const customer = customers.find(c => c.id === entry.customer_id);
+
+        panel.webview.postMessage({
+            command: 'openEntryForEdit',
+            entry: {
+                id: entry.id,
+                projectId: entry.project_id,
+                projectName: project?.name,
+                customerId: entry.customer_id,
+                customerName: customer?.account_name,
+                start: entry.start_time,
+                end: entry.end_time,
+                duration: entry.duration,
+                notes: entry.notes,
+                isBillable: entry.is_billable,
+                synergySynced: entry.synergy_synced,
+                synergySubmitted: entry.synergy_submitted,
+                synergySyncDate: entry.synergy_sync_date,
+                synergySubmissionDate: entry.synergy_submission_date,
+                synergyId: entry.synergy_id
+            }
+        });
+    }
 }
 
 function sendProjectsList(panel: vscode.WebviewPanel): void {
@@ -2826,6 +2863,35 @@ async function deleteCalendarTimeEntry(panel: vscode.WebviewPanel, id: number): 
             error: String(error)
         });
         vscode.window.showErrorMessage(`Failed to delete time entry: ${error}`);
+    }
+}
+
+async function moveGroupEntry(panel: vscode.WebviewPanel, entryId: number, daysDiff: number): Promise<void> {
+    try {
+        const entry = db.getTimeEntryById(entryId);
+        if (!entry) {
+            throw new Error('Entry not found');
+        }
+
+        // Calculate new dates by adding daysDiff
+        const oldStart = new Date(entry.start_time);
+        const newStart = new Date(oldStart);
+        newStart.setDate(newStart.getDate() + daysDiff);
+
+        const oldEnd = entry.end_time ? new Date(entry.end_time) : null;
+        const newEnd = oldEnd ? new Date(oldEnd) : null;
+        if (newEnd) {
+            newEnd.setDate(newEnd.getDate() + daysDiff);
+        }
+
+        // Update the entry
+        db.updateTimeEntry(entryId, {
+            start_time: newStart.toISOString(),
+            end_time: newEnd ? newEnd.toISOString() : entry.end_time
+        });
+
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to move group entry: ${error}`);
     }
 }
 
@@ -3905,17 +3971,48 @@ function getCalendarHtml(): string {
 
         function handleEventDrop(info) {
             const event = info.event;
-            const updates = {
-                start: event.start.toISOString(),
-                end: event.end ? event.end.toISOString() : null,
-                duration: event.end ? Math.floor((event.end - event.start) / 1000) : null
-            };
 
-            vscode.postMessage({
-                command: 'updateEntry',
-                id: parseInt(event.id),
-                updates: updates
-            });
+            // Check if this is a grouped entry
+            if (event.extendedProps.isGroup) {
+                // Calculate the date difference
+                const oldDate = info.oldEvent.start;
+                const newDate = event.start;
+                const daysDiff = Math.round((newDate - oldDate) / (1000 * 60 * 60 * 24));
+
+                // Update all entries in the group
+                const entryIds = event.extendedProps.entryIds || [];
+                entryIds.forEach(entryId => {
+                    vscode.postMessage({
+                        command: 'moveGroupEntry',
+                        entryId: entryId,
+                        daysDiff: daysDiff
+                    });
+                });
+
+                // Refresh calendar after a short delay
+                setTimeout(() => {
+                    const viewStart = new Date(newDate.getFullYear(), newDate.getMonth(), 1).toISOString();
+                    const viewEnd = new Date(newDate.getFullYear(), newDate.getMonth() + 2, 0).toISOString();
+                    vscode.postMessage({
+                        command: 'getEntries',
+                        startDate: viewStart,
+                        endDate: viewEnd
+                    });
+                }, 500);
+            } else {
+                // Regular single entry update
+                const updates = {
+                    start: event.start.toISOString(),
+                    end: event.end ? event.end.toISOString() : null,
+                    duration: event.end ? Math.floor((event.end - event.start) / 1000) : null
+                };
+
+                vscode.postMessage({
+                    command: 'updateEntry',
+                    id: parseInt(event.id),
+                    updates: updates
+                });
+            }
         }
 
         function handleEventResize(info) {
@@ -4138,6 +4235,9 @@ function getCalendarHtml(): string {
                     statusBadge = '<span style="padding: 2px 8px; background: #ff9800; color: white; border-radius: 3px; font-size: 10px; margin-left: 8px;">⚠ SYNCED</span>';
                 }
 
+                const canEdit = !entry.synergySynced && !entry.synergySubmitted;
+                const editButton = canEdit ? \`<button onclick="editGroupEntry(\${entry.id})" style="padding: 4px 12px; margin-top: 8px;">Edit Entry</button>\` : '';
+
                 return \`
                     <div style="padding: 12px; margin-bottom: 8px; background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px;">
                         <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 6px;">
@@ -4147,9 +4247,12 @@ function getCalendarHtml(): string {
                             </div>
                         </div>
                         \${entry.notes ? \`<div style="font-size: 11px; color: var(--vscode-descriptionForeground); padding: 6px; background: var(--vscode-input-background); border-radius: 3px;">📝 \${entry.notes}</div>\` : ''}
-                        <div style="margin-top: 8px; font-size: 11px;">
-                            <span style="color: var(--vscode-descriptionForeground);">Billable: </span>
-                            <span style="color: \${entry.isBillable ? 'var(--vscode-charts-green)' : 'var(--vscode-charts-red)'};">\${entry.isBillable ? 'Yes' : 'No'}</span>
+                        <div style="margin-top: 8px; font-size: 11px; display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <span style="color: var(--vscode-descriptionForeground);">Billable: </span>
+                                <span style="color: \${entry.isBillable ? 'var(--vscode-charts-green)' : 'var(--vscode-charts-red)'};">\${entry.isBillable ? 'Yes' : 'No'}</span>
+                            </div>
+                            \${editButton}
                         </div>
                     </div>
                 \`;
@@ -4160,6 +4263,17 @@ function getCalendarHtml(): string {
 
         function closeGroupedEntriesModal() {
             document.getElementById('groupedEntriesModal').style.display = 'none';
+        }
+
+        function editGroupEntry(entryId) {
+            // Request the specific entry data from the backend
+            vscode.postMessage({
+                command: 'getEntry',
+                id: entryId
+            });
+
+            // Close grouped modal
+            closeGroupedEntriesModal();
         }
 
         function formatDateTimeLocal(date) {
@@ -4630,6 +4744,32 @@ function getCalendarHtml(): string {
                         option.textContent = customer.account_name;
                         customerSelect.appendChild(option);
                     });
+                    break;
+
+                case 'openEntryForEdit':
+                    // Create a fake event object from the entry data
+                    const entryData = message.entry;
+                    const fakeEvent = {
+                        id: entryData.id,
+                        start: entryData.start,
+                        end: entryData.end,
+                        extendedProps: {
+                            projectId: entryData.projectId,
+                            projectName: entryData.projectName,
+                            customerId: entryData.customerId,
+                            customerName: entryData.customerName,
+                            duration: entryData.duration,
+                            notes: entryData.notes,
+                            isBillable: entryData.isBillable,
+                            synergySynced: entryData.synergySynced,
+                            synergySubmitted: entryData.synergySubmitted,
+                            synergySyncDate: entryData.synergySyncDate,
+                            synergySubmissionDate: entryData.synergySubmissionDate,
+                            synergyId: entryData.synergyId
+                        }
+                    };
+                    selectedEvent = fakeEvent;
+                    openModal('Edit Time Entry', null, fakeEvent);
                     break;
             }
         });
