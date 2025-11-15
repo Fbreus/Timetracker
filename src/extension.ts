@@ -3528,6 +3528,96 @@ function getCalendarHtml(): string {
 
             // Set up form submission
             document.getElementById('entryForm').addEventListener('submit', handleFormSubmit);
+
+            // Set up recurring form submission
+            document.getElementById('recurringForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                const projectId = parseInt(document.getElementById('recurringProject').value);
+                const customerId = document.getElementById('recurringCustomer').value ? parseInt(document.getElementById('recurringCustomer').value) : null;
+                const startTime = document.getElementById('recurringStartTime').value;
+                const endTime = document.getElementById('recurringEndTime').value;
+                const weeks = parseInt(document.getElementById('recurringWeeks').value);
+                const startDate = new Date(document.getElementById('recurringStartDate').value);
+                const notes = document.getElementById('recurringNotes').value;
+                const isBillable = document.getElementById('recurringBillable').checked;
+
+                // Get selected days
+                const selectedDays = [];
+                if (document.getElementById('dayMon').checked) selectedDays.push(1);
+                if (document.getElementById('dayTue').checked) selectedDays.push(2);
+                if (document.getElementById('dayWed').checked) selectedDays.push(3);
+                if (document.getElementById('dayThu').checked) selectedDays.push(4);
+                if (document.getElementById('dayFri').checked) selectedDays.push(5);
+                if (document.getElementById('daySat').checked) selectedDays.push(6);
+                if (document.getElementById('daySun').checked) selectedDays.push(0);
+
+                if (selectedDays.length === 0) {
+                    alert('Please select at least one day of the week.');
+                    return;
+                }
+
+                // Calculate duration
+                const [startH, startM] = startTime.split(':').map(Number);
+                const [endH, endM] = endTime.split(':').map(Number);
+                const duration = (endH * 3600 + endM * 60) - (startH * 3600 + startM * 60);
+
+                if (duration <= 0) {
+                    alert('End time must be after start time.');
+                    return;
+                }
+
+                const totalEntries = weeks * selectedDays.length;
+                if (!confirm(\`This will create \${totalEntries} entries over \${weeks} weeks. Continue?\`)) {
+                    return;
+                }
+
+                // Generate entries
+                for (let week = 0; week < weeks; week++) {
+                    selectedDays.forEach(dayOfWeek => {
+                        const entryDate = new Date(startDate);
+                        entryDate.setDate(startDate.getDate() + (week * 7));
+
+                        // Find the correct day in this week
+                        const currentDay = entryDate.getDay();
+                        const daysToAdd = (dayOfWeek - currentDay + 7) % 7;
+                        entryDate.setDate(entryDate.getDate() + daysToAdd);
+
+                        const entryStart = new Date(entryDate);
+                        entryStart.setHours(startH, startM, 0, 0);
+
+                        const entryEnd = new Date(entryDate);
+                        entryEnd.setHours(endH, endM, 0, 0);
+
+                        vscode.postMessage({
+                            command: 'createEntry',
+                            entry: {
+                                projectId: projectId,
+                                customerId: customerId,
+                                start: entryStart.toISOString(),
+                                end: entryEnd.toISOString(),
+                                duration: duration,
+                                notes: notes,
+                                isBillable: isBillable
+                            }
+                        });
+                    });
+                }
+
+                closeRecurringModal();
+                alert(\`Created \${totalEntries} recurring entries!\`);
+
+                // Refresh calendar after a short delay
+                setTimeout(() => {
+                    const viewStart = new Date(startDate.getFullYear(), startDate.getMonth(), 1).toISOString();
+                    const viewEnd = new Date(startDate.getFullYear(), startDate.getMonth() + (Math.ceil(weeks / 4) + 2), 0).toISOString();
+                    vscode.postMessage({
+                        command: 'getEntries',
+                        startDate: viewStart,
+                        endDate: viewEnd
+                    });
+                }, 1000);
+            });
         });
 
         function handleDatesSet(info) {
@@ -4162,97 +4252,6 @@ function getCalendarHtml(): string {
         function closeRecurringModal() {
             document.getElementById('recurringModal').style.display = 'none';
         }
-
-        document.addEventListener('DOMContentLoaded', function() {
-            document.getElementById('recurringForm').addEventListener('submit', function(e) {
-                e.preventDefault();
-
-                const projectId = parseInt(document.getElementById('recurringProject').value);
-                const customerId = document.getElementById('recurringCustomer').value ? parseInt(document.getElementById('recurringCustomer').value) : null;
-                const startTime = document.getElementById('recurringStartTime').value;
-                const endTime = document.getElementById('recurringEndTime').value;
-                const weeks = parseInt(document.getElementById('recurringWeeks').value);
-                const startDate = new Date(document.getElementById('recurringStartDate').value);
-                const notes = document.getElementById('recurringNotes').value;
-                const isBillable = document.getElementById('recurringBillable').checked;
-
-                // Get selected days
-                const selectedDays = [];
-                if (document.getElementById('dayMon').checked) selectedDays.push(1);
-                if (document.getElementById('dayTue').checked) selectedDays.push(2);
-                if (document.getElementById('dayWed').checked) selectedDays.push(3);
-                if (document.getElementById('dayThu').checked) selectedDays.push(4);
-                if (document.getElementById('dayFri').checked) selectedDays.push(5);
-                if (document.getElementById('daySat').checked) selectedDays.push(6);
-                if (document.getElementById('daySun').checked) selectedDays.push(0);
-
-                if (selectedDays.length === 0) {
-                    alert('Please select at least one day of the week.');
-                    return;
-                }
-
-                // Calculate duration
-                const [startH, startM] = startTime.split(':').map(Number);
-                const [endH, endM] = endTime.split(':').map(Number);
-                const duration = (endH * 3600 + endM * 60) - (startH * 3600 + startM * 60);
-
-                if (duration <= 0) {
-                    alert('End time must be after start time.');
-                    return;
-                }
-
-                const totalEntries = weeks * selectedDays.length;
-                if (!confirm(\`This will create \${totalEntries} entries over \${weeks} weeks. Continue?\`)) {
-                    return;
-                }
-
-                // Generate entries
-                for (let week = 0; week < weeks; week++) {
-                    selectedDays.forEach(dayOfWeek => {
-                        const entryDate = new Date(startDate);
-                        entryDate.setDate(startDate.getDate() + (week * 7));
-
-                        // Find the correct day in this week
-                        const currentDay = entryDate.getDay();
-                        const daysToAdd = (dayOfWeek - currentDay + 7) % 7;
-                        entryDate.setDate(entryDate.getDate() + daysToAdd);
-
-                        const entryStart = new Date(entryDate);
-                        entryStart.setHours(startH, startM, 0, 0);
-
-                        const entryEnd = new Date(entryDate);
-                        entryEnd.setHours(endH, endM, 0, 0);
-
-                        vscode.postMessage({
-                            command: 'createEntry',
-                            entry: {
-                                projectId: projectId,
-                                customerId: customerId,
-                                start: entryStart.toISOString(),
-                                end: entryEnd.toISOString(),
-                                duration: duration,
-                                notes: notes,
-                                isBillable: isBillable
-                            }
-                        });
-                    });
-                }
-
-                closeRecurringModal();
-                alert(\`Created \${totalEntries} recurring entries!\`);
-
-                // Refresh calendar after a short delay
-                setTimeout(() => {
-                    const viewStart = new Date(startDate.getFullYear(), startDate.getMonth(), 1).toISOString();
-                    const viewEnd = new Date(startDate.getFullYear(), startDate.getMonth() + (Math.ceil(weeks / 4) + 2), 0).toISOString();
-                    vscode.postMessage({
-                        command: 'getEntries',
-                        startDate: viewStart,
-                        endDate: viewEnd
-                    });
-                }, 1000);
-            });
-        });
 
         // Handle messages from extension
         window.addEventListener('message', event => {
