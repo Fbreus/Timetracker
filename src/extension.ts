@@ -3302,6 +3302,16 @@ function getCalendarHtml(): string {
         </div>
     </div>
 
+    <!-- Quick Actions Bar -->
+    <div class="filters-panel" style="margin-top: 0;">
+        <div class="filters-title">Quick Actions</div>
+        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <button onclick="showTemplatesModal()" style="padding: 8px 16px;">📋 Templates</button>
+            <button onclick="copyCurrentWeek()" style="padding: 8px 16px;">📅 Copy This Week to Next</button>
+            <button onclick="showRecurringModal()" style="padding: 8px 16px;">🔁 Create Recurring Entry</button>
+        </div>
+    </div>
+
     <div id="calendar"></div>
 
     <!-- Legend -->
@@ -3394,6 +3404,97 @@ function getCalendarHtml(): string {
         </div>
     </div>
 
+    <!-- Templates Modal -->
+    <div id="templatesModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Entry Templates</h2>
+                <button class="close" onclick="closeTemplatesModal()">&times;</button>
+            </div>
+            <div style="margin-bottom: 20px;">
+                <button onclick="saveCurrentAsTemplate()" style="padding: 8px 16px;">💾 Save Current Entry as Template</button>
+            </div>
+            <div id="templatesList" style="max-height: 400px; overflow-y: auto;">
+                <p style="color: var(--vscode-descriptionForeground); text-align: center; padding: 20px;">No templates saved yet.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recurring Entry Modal -->
+    <div id="recurringModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Create Recurring Entry</h2>
+                <button class="close" onclick="closeRecurringModal()">&times;</button>
+            </div>
+            <form id="recurringForm">
+                <div class="form-group">
+                    <label for="recurringProject">Project *</label>
+                    <select id="recurringProject" required>
+                        <option value="">Select a project...</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="recurringCustomer">Customer</label>
+                    <select id="recurringCustomer">
+                        <option value="">None</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Days of Week *</label>
+                    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 8px;">
+                        <label class="filter-checkbox-group"><input type="checkbox" id="dayMon" value="1"> Monday</label>
+                        <label class="filter-checkbox-group"><input type="checkbox" id="dayTue" value="2"> Tuesday</label>
+                        <label class="filter-checkbox-group"><input type="checkbox" id="dayWed" value="3"> Wednesday</label>
+                        <label class="filter-checkbox-group"><input type="checkbox" id="dayThu" value="4"> Thursday</label>
+                        <label class="filter-checkbox-group"><input type="checkbox" id="dayFri" value="5"> Friday</label>
+                        <label class="filter-checkbox-group"><input type="checkbox" id="daySat" value="6"> Saturday</label>
+                        <label class="filter-checkbox-group"><input type="checkbox" id="daySun" value="0"> Sunday</label>
+                    </div>
+                </div>
+
+                <div class="form-group time-inputs">
+                    <div>
+                        <label for="recurringStartTime">Start Time *</label>
+                        <input type="time" id="recurringStartTime" required value="09:00">
+                    </div>
+                    <div>
+                        <label for="recurringEndTime">End Time *</label>
+                        <input type="time" id="recurringEndTime" required value="10:00">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="recurringWeeks">Number of Weeks *</label>
+                    <input type="number" id="recurringWeeks" min="1" max="52" value="10" required>
+                    <div class="stat-subtitle">Entries will be created for the selected days over this many weeks</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="recurringStartDate">Start Date *</label>
+                    <input type="date" id="recurringStartDate" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="recurringNotes">Notes</label>
+                    <textarea id="recurringNotes" placeholder="Optional notes for all entries"></textarea>
+                </div>
+
+                <div class="form-group checkbox-group">
+                    <input type="checkbox" id="recurringBillable">
+                    <label for="recurringBillable">Billable</label>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="secondary" onclick="closeRecurringModal()">Cancel</button>
+                    <button type="submit">Create Entries</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         const vscode = acquireVsCodeApi();
         let calendar;
@@ -3401,6 +3502,7 @@ function getCalendarHtml(): string {
         let projects = [];
         let customers = [];
         let selectedEvent = null;
+        let templates = [];
 
         document.addEventListener('DOMContentLoaded', function() {
             const calendarEl = document.getElementById('calendar');
@@ -3840,6 +3942,317 @@ function getCalendarHtml(): string {
                 }
             });
         }
+
+        // Template Management
+        function loadTemplates() {
+            const saved = localStorage.getItem('timetracker_templates');
+            templates = saved ? JSON.parse(saved) : [];
+            renderTemplates();
+        }
+
+        function saveTemplates() {
+            localStorage.setItem('timetracker_templates', JSON.stringify(templates));
+        }
+
+        function renderTemplates() {
+            const list = document.getElementById('templatesList');
+            if (templates.length === 0) {
+                list.innerHTML = '<p style="color: var(--vscode-descriptionForeground); text-align: center; padding: 20px;">No templates saved yet.</p>';
+                return;
+            }
+
+            list.innerHTML = templates.map((template, index) => \`
+                <div style="padding: 12px; margin-bottom: 10px; background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px;">
+                    <div style="display: flex; justify-content: space-between; align-items: start;">
+                        <div style="flex: 1;">
+                            <div style="font-weight: 600; margin-bottom: 5px;">\${template.name}</div>
+                            <div style="font-size: 11px; color: var(--vscode-descriptionForeground);">
+                                Project: \${template.projectName}<br>
+                                Duration: \${template.duration} min | Billable: \${template.isBillable ? 'Yes' : 'No'}
+                                \${template.notes ? '<br>Notes: ' + template.notes : ''}
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button onclick="applyTemplate(\${index})" style="padding: 6px 12px;">Use</button>
+                            <button onclick="deleteTemplate(\${index})" class="danger" style="padding: 6px 12px;">Delete</button>
+                        </div>
+                    </div>
+                </div>
+            \`).join('');
+        }
+
+        function showTemplatesModal() {
+            loadTemplates();
+            document.getElementById('templatesModal').style.display = 'block';
+        }
+
+        function closeTemplatesModal() {
+            document.getElementById('templatesModal').style.display = 'none';
+        }
+
+        function saveCurrentAsTemplate() {
+            if (!selectedEvent) {
+                const name = prompt('Enter template name:');
+                if (!name) return;
+
+                alert('Please select an existing entry first, then open Templates and click "Save Current Entry as Template"');
+                return;
+            }
+
+            const name = prompt('Enter template name:', 'My Template');
+            if (!name) return;
+
+            const start = new Date(selectedEvent.start);
+            const end = new Date(selectedEvent.end || selectedEvent.start);
+            const duration = Math.floor((end - start) / 60000); // minutes
+
+            const template = {
+                name: name,
+                projectId: selectedEvent.extendedProps.projectId,
+                projectName: selectedEvent.extendedProps.projectName,
+                customerId: selectedEvent.extendedProps.customerId,
+                duration: duration,
+                notes: selectedEvent.extendedProps.notes || '',
+                isBillable: selectedEvent.extendedProps.isBillable
+            };
+
+            templates.push(template);
+            saveTemplates();
+            renderTemplates();
+            alert('Template saved!');
+        }
+
+        function applyTemplate(index) {
+            const template = templates[index];
+            const dateStr = prompt('Enter date to add this entry (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
+            if (!dateStr) return;
+
+            const startDate = new Date(dateStr + 'T09:00');
+            const endDate = new Date(startDate.getTime() + template.duration * 60000);
+
+            vscode.postMessage({
+                command: 'createEntry',
+                entry: {
+                    projectId: template.projectId,
+                    customerId: template.customerId,
+                    start: startDate.toISOString(),
+                    end: endDate.toISOString(),
+                    duration: template.duration * 60,
+                    notes: template.notes,
+                    isBillable: template.isBillable
+                }
+            });
+
+            closeTemplatesModal();
+        }
+
+        function deleteTemplate(index) {
+            if (confirm('Delete this template?')) {
+                templates.splice(index, 1);
+                saveTemplates();
+                renderTemplates();
+            }
+        }
+
+        // Copy Week Functionality
+        function copyCurrentWeek() {
+            const view = calendar.view;
+            let weekStart, weekEnd;
+
+            if (view.type === 'timeGridWeek') {
+                weekStart = new Date(view.currentStart);
+                weekEnd = new Date(view.currentEnd);
+            } else {
+                // If in month or day view, calculate current week
+                const today = new Date();
+                const day = today.getDay();
+                const diff = today.getDate() - day + (day === 0 ? -6 : 1); // Monday
+                weekStart = new Date(today.setDate(diff));
+                weekStart.setHours(0, 0, 0, 0);
+                weekEnd = new Date(weekStart);
+                weekEnd.setDate(weekEnd.getDate() + 7);
+            }
+
+            const weekEntries = currentEvents.filter(event => {
+                const eventDate = new Date(event.start);
+                return eventDate >= weekStart && eventDate < weekEnd && !event.extendedProps.synergySynced && !event.extendedProps.synergySubmitted;
+            });
+
+            if (weekEntries.length === 0) {
+                alert('No entries found in the current week to copy (synced entries are excluded).');
+                return;
+            }
+
+            if (!confirm(\`Copy \${weekEntries.length} entries from this week to next week?\`)) {
+                return;
+            }
+
+            weekEntries.forEach(event => {
+                const originalStart = new Date(event.start);
+                const newStart = new Date(originalStart);
+                newStart.setDate(newStart.getDate() + 7); // Add 7 days
+
+                const originalEnd = event.end ? new Date(event.end) : null;
+                const newEnd = originalEnd ? new Date(originalEnd.getTime() + 7 * 24 * 60 * 60 * 1000) : null;
+
+                vscode.postMessage({
+                    command: 'createEntry',
+                    entry: {
+                        projectId: event.extendedProps.projectId,
+                        customerId: event.extendedProps.customerId,
+                        start: newStart.toISOString(),
+                        end: newEnd ? newEnd.toISOString() : null,
+                        duration: event.extendedProps.duration,
+                        notes: event.extendedProps.notes,
+                        isBillable: event.extendedProps.isBillable
+                    }
+                });
+            });
+
+            setTimeout(() => {
+                const nextWeekStart = new Date(weekStart);
+                nextWeekStart.setDate(nextWeekStart.getDate() + 7);
+                const startDate = new Date(nextWeekStart.getFullYear(), nextWeekStart.getMonth(), 1).toISOString();
+                const endDate = new Date(nextWeekStart.getFullYear(), nextWeekStart.getMonth() + 2, 0).toISOString();
+                vscode.postMessage({
+                    command: 'getEntries',
+                    startDate: startDate,
+                    endDate: endDate
+                });
+            }, 500);
+        }
+
+        // Recurring Entry Functions
+        function showRecurringModal() {
+            const modal = document.getElementById('recurringModal');
+            const form = document.getElementById('recurringForm');
+            form.reset();
+
+            // Populate project dropdown
+            const recurringProject = document.getElementById('recurringProject');
+            recurringProject.innerHTML = '<option value="">Select a project...</option>';
+            projects.forEach(project => {
+                const option = document.createElement('option');
+                option.value = project.id;
+                option.textContent = project.name;
+                recurringProject.appendChild(option);
+            });
+
+            // Populate customer dropdown
+            const recurringCustomer = document.getElementById('recurringCustomer');
+            recurringCustomer.innerHTML = '<option value="">None</option>';
+            customers.forEach(customer => {
+                const option = document.createElement('option');
+                option.value = customer.id;
+                option.textContent = customer.account_name;
+                recurringCustomer.appendChild(option);
+            });
+
+            // Set default start date to next Monday
+            const today = new Date();
+            const day = today.getDay();
+            const daysUntilMonday = day === 0 ? 1 : (8 - day);
+            const nextMonday = new Date(today);
+            nextMonday.setDate(today.getDate() + daysUntilMonday);
+            document.getElementById('recurringStartDate').value = nextMonday.toISOString().split('T')[0];
+
+            modal.style.display = 'block';
+        }
+
+        function closeRecurringModal() {
+            document.getElementById('recurringModal').style.display = 'none';
+        }
+
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementById('recurringForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                const projectId = parseInt(document.getElementById('recurringProject').value);
+                const customerId = document.getElementById('recurringCustomer').value ? parseInt(document.getElementById('recurringCustomer').value) : null;
+                const startTime = document.getElementById('recurringStartTime').value;
+                const endTime = document.getElementById('recurringEndTime').value;
+                const weeks = parseInt(document.getElementById('recurringWeeks').value);
+                const startDate = new Date(document.getElementById('recurringStartDate').value);
+                const notes = document.getElementById('recurringNotes').value;
+                const isBillable = document.getElementById('recurringBillable').checked;
+
+                // Get selected days
+                const selectedDays = [];
+                if (document.getElementById('dayMon').checked) selectedDays.push(1);
+                if (document.getElementById('dayTue').checked) selectedDays.push(2);
+                if (document.getElementById('dayWed').checked) selectedDays.push(3);
+                if (document.getElementById('dayThu').checked) selectedDays.push(4);
+                if (document.getElementById('dayFri').checked) selectedDays.push(5);
+                if (document.getElementById('daySat').checked) selectedDays.push(6);
+                if (document.getElementById('daySun').checked) selectedDays.push(0);
+
+                if (selectedDays.length === 0) {
+                    alert('Please select at least one day of the week.');
+                    return;
+                }
+
+                // Calculate duration
+                const [startH, startM] = startTime.split(':').map(Number);
+                const [endH, endM] = endTime.split(':').map(Number);
+                const duration = (endH * 3600 + endM * 60) - (startH * 3600 + startM * 60);
+
+                if (duration <= 0) {
+                    alert('End time must be after start time.');
+                    return;
+                }
+
+                const totalEntries = weeks * selectedDays.length;
+                if (!confirm(\`This will create \${totalEntries} entries over \${weeks} weeks. Continue?\`)) {
+                    return;
+                }
+
+                // Generate entries
+                for (let week = 0; week < weeks; week++) {
+                    selectedDays.forEach(dayOfWeek => {
+                        const entryDate = new Date(startDate);
+                        entryDate.setDate(startDate.getDate() + (week * 7));
+
+                        // Find the correct day in this week
+                        const currentDay = entryDate.getDay();
+                        const daysToAdd = (dayOfWeek - currentDay + 7) % 7;
+                        entryDate.setDate(entryDate.getDate() + daysToAdd);
+
+                        const entryStart = new Date(entryDate);
+                        entryStart.setHours(startH, startM, 0, 0);
+
+                        const entryEnd = new Date(entryDate);
+                        entryEnd.setHours(endH, endM, 0, 0);
+
+                        vscode.postMessage({
+                            command: 'createEntry',
+                            entry: {
+                                projectId: projectId,
+                                customerId: customerId,
+                                start: entryStart.toISOString(),
+                                end: entryEnd.toISOString(),
+                                duration: duration,
+                                notes: notes,
+                                isBillable: isBillable
+                            }
+                        });
+                    });
+                }
+
+                closeRecurringModal();
+                alert(\`Created \${totalEntries} recurring entries!\`);
+
+                // Refresh calendar after a short delay
+                setTimeout(() => {
+                    const viewStart = new Date(startDate.getFullYear(), startDate.getMonth(), 1).toISOString();
+                    const viewEnd = new Date(startDate.getFullYear(), startDate.getMonth() + (Math.ceil(weeks / 4) + 2), 0).toISOString();
+                    vscode.postMessage({
+                        command: 'getEntries',
+                        startDate: viewStart,
+                        endDate: viewEnd
+                    });
+                }, 1000);
+            });
+        });
 
         // Handle messages from extension
         window.addEventListener('message', event => {
