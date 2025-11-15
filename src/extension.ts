@@ -813,6 +813,10 @@ async function viewTimeEntries(context: vscode.ExtensionContext): Promise<void> 
                     await editTimeEntry(message.entryId);
                     sendTimeEntriesData(panel); // Refresh
                     break;
+                case 'updateEntryFromForm':
+                    await updateEntryFromForm(message.entryId, message.updates);
+                    sendTimeEntriesData(panel); // Refresh
+                    break;
                 case 'deleteEntry':
                     await deleteTimeEntry(message.entryId);
                     sendTimeEntriesData(panel); // Refresh
@@ -1091,6 +1095,15 @@ async function editTimeEntry(entryId: number): Promise<void> {
     });
 
     vscode.window.showInformationMessage('Time entry updated');
+}
+
+async function updateEntryFromForm(entryId: number, updates: any): Promise<void> {
+    try {
+        db.updateTimeEntry(entryId, updates);
+        vscode.window.showInformationMessage('Time entry updated successfully');
+    } catch (error) {
+        vscode.window.showErrorMessage(`Failed to update entry: ${error}`);
+    }
 }
 
 async function deleteTimeEntry(entryId: number): Promise<void> {
@@ -1386,6 +1399,46 @@ function getTimeEntriesHtml(): string {
         <div class="no-entries">Loading...</div>
     </div>
 
+    <!-- Edit Entry Modal -->
+    <div id="editEntryModal" class="modal-overlay" onclick="closeEditModalOnOverlay(event)">
+        <div class="synergy-card" onclick="event.stopPropagation()">
+            <h2>Edit Time Entry</h2>
+
+            <form id="editEntryForm" onsubmit="submitEditEntry(event)">
+                <input type="hidden" id="editEntryId" value="">
+
+                <div class="form-group">
+                    <label for="editStartTime">Start Time *</label>
+                    <input type="time" id="editStartTime" required>
+                    <div class="help-text">Time when work started</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="editEndTime">End Time *</label>
+                    <input type="time" id="editEndTime" required>
+                    <div class="help-text">Time when work ended</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="editNotes">Notes</label>
+                    <textarea id="editNotes" placeholder="Enter notes about this work session..."></textarea>
+                    <div class="help-text">Optional description of work performed</div>
+                </div>
+
+                <div class="form-group">
+                    <label for="editTaskCode">Task Code</label>
+                    <input type="text" id="editTaskCode" placeholder="e.g., TASK-123">
+                    <div class="help-text">Optional task or ticket identifier</div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn-secondary" onclick="closeEditModal()">Cancel</button>
+                    <button type="submit" class="btn-primary">Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Synergy Submission Modal -->
     <div id="synergyModal" class="modal-overlay" onclick="closeSynergyModalOnOverlay(event)">
         <div class="synergy-card" onclick="event.stopPropagation()">
@@ -1593,6 +1646,7 @@ function getTimeEntriesHtml(): string {
                             <th style="width: 30px;"></th>
                             <th>Date</th>
                             <th>Project</th>
+                            <th>Task Code</th>
                             <th>Start Time</th>
                             <th>End Time</th>
                             <th>Duration</th>
@@ -1606,6 +1660,12 @@ function getTimeEntriesHtml(): string {
                             const isExpanded = expandedGroups.has(groupKey);
                             const expandIcon = isExpanded ? '▼' : '▶';
 
+                            // Collect unique task codes in this group
+                            const taskCodes = [...new Set(group.entries.map(e => e.task_code).filter(tc => tc))];
+                            const taskCodeDisplay = taskCodes.length === 0 ? '-'
+                                : taskCodes.length === 1 ? taskCodes[0]
+                                : \`\${taskCodes.length} codes\`;
+
                             let html = \`
                                 <tr class="group-row" onclick="toggleGroup('\${groupKey}')">
                                     <td style="text-align: center; cursor: pointer; user-select: none;">
@@ -1613,6 +1673,7 @@ function getTimeEntriesHtml(): string {
                                     </td>
                                     <td>\${formatDate(group.date)}</td>
                                     <td><strong>\${group.projectName}</strong> <span style="color: var(--vscode-descriptionForeground);">(\${group.entryIds.length} entries)</span></td>
+                                    <td style="color: var(--vscode-descriptionForeground);">\${taskCodeDisplay}</td>
                                     <td>\${formatTime(group.startTime)}</td>
                                     <td>\${formatTime(group.endTime)}</td>
                                     <td><strong>\${formatDuration(group.totalDuration)}</strong></td>
@@ -1634,6 +1695,7 @@ function getTimeEntriesHtml(): string {
                                             <td></td>
                                             <td style="padding-left: 20px; color: var(--vscode-descriptionForeground);">↳</td>
                                             <td style="color: var(--vscode-descriptionForeground); font-size: 0.9em;">\${entry.projectName}</td>
+                                            <td style="color: var(--vscode-descriptionForeground); font-size: 0.9em;">\${entry.task_code || '-'}</td>
                                             <td>\${formatTime(entry.start_time)}</td>
                                             <td>\${entry.end_time ? formatTime(entry.end_time) : 'In progress'}</td>
                                             <td>\${formatDuration(entry.duration || 0)}</td>
@@ -1848,7 +1910,89 @@ function getTimeEntriesHtml(): string {
         }
 
         function editEntry(entryId) {
-            vscode.postMessage({ command: 'editEntry', entryId: entryId });
+            // Find the entry
+            const entry = allEntries.find(e => e.id === entryId);
+            if (!entry) {
+                console.error('Entry not found');
+                return;
+            }
+
+            // Populate the form
+            document.getElementById('editEntryId').value = entryId;
+
+            // Format times for time input (HH:MM)
+            const startDate = new Date(entry.start_time);
+            const startHours = String(startDate.getHours()).padStart(2, '0');
+            const startMinutes = String(startDate.getMinutes()).padStart(2, '0');
+            document.getElementById('editStartTime').value = \`\${startHours}:\${startMinutes}\`;
+
+            if (entry.end_time) {
+                const endDate = new Date(entry.end_time);
+                const endHours = String(endDate.getHours()).padStart(2, '0');
+                const endMinutes = String(endDate.getMinutes()).padStart(2, '0');
+                document.getElementById('editEndTime').value = \`\${endHours}:\${endMinutes}\`;
+            }
+
+            document.getElementById('editNotes').value = entry.notes || '';
+            document.getElementById('editTaskCode').value = entry.task_code || '';
+
+            // Show the modal
+            document.getElementById('editEntryModal').classList.add('active');
+        }
+
+        function closeEditModal() {
+            document.getElementById('editEntryModal').classList.remove('active');
+        }
+
+        function closeEditModalOnOverlay(event) {
+            if (event.target.id === 'editEntryModal') {
+                closeEditModal();
+            }
+        }
+
+        function submitEditEntry(event) {
+            event.preventDefault();
+
+            const entryId = parseInt(document.getElementById('editEntryId').value);
+            const entry = allEntries.find(e => e.id === entryId);
+            if (!entry) {
+                console.error('Entry not found');
+                return;
+            }
+
+            // Get form values
+            const startTime = document.getElementById('editStartTime').value;
+            const endTime = document.getElementById('editEndTime').value;
+            const notes = document.getElementById('editNotes').value;
+            const taskCode = document.getElementById('editTaskCode').value;
+
+            // Create updated date-time strings
+            const entryDate = new Date(entry.start_time);
+            const [startHours, startMinutes] = startTime.split(':');
+            const newStartDate = new Date(entryDate);
+            newStartDate.setHours(parseInt(startHours), parseInt(startMinutes), 0, 0);
+
+            const [endHours, endMinutes] = endTime.split(':');
+            const newEndDate = new Date(entryDate);
+            newEndDate.setHours(parseInt(endHours), parseInt(endMinutes), 0, 0);
+
+            // Calculate duration in seconds
+            const duration = Math.floor((newEndDate - newStartDate) / 1000);
+
+            // Send update to extension
+            vscode.postMessage({
+                command: 'updateEntryFromForm',
+                entryId: entryId,
+                updates: {
+                    start_time: newStartDate.toISOString(),
+                    end_time: newEndDate.toISOString(),
+                    duration: duration,
+                    notes: notes,
+                    task_code: taskCode || null
+                }
+            });
+
+            closeEditModal();
         }
 
         function deleteEntry(entryId) {
