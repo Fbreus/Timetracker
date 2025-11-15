@@ -851,13 +851,12 @@ async function viewTimeEntries(context: vscode.ExtensionContext): Promise<void> 
 }
 
 function sendTimeEntriesData(panel: vscode.WebviewPanel): void {
-    // Get last 90 days of entries (increased from 30 to cover more calendar navigation)
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 90);
+    // Get entries created in the last 30 days (filtered by creation date, not work date)
+    const entries = db.getRecentlyCreatedTimeEntries(30);
 
-    const entries = db.getAllTimeEntries(startDate.toISOString(), endDate.toISOString());
-    console.log(`[DEBUG] sendTimeEntriesData: Found ${entries.length} entries from ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - 30);
+    console.log(`[DEBUG] sendTimeEntriesData: Found ${entries.length} entries created since ${cutoffDate.toISOString().split('T')[0]}`);
     const projects = new Map<number, string>();
 
     // Get project names

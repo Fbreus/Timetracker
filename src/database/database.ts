@@ -824,6 +824,26 @@ export class TimeTrackerDatabase {
         return result[0].values.map(row => this.rowToTimeEntry(result[0].columns, row));
     }
 
+    getRecentlyCreatedTimeEntries(days: number = 30): TimeEntry[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - days);
+
+        const query = 'SELECT * FROM time_entries WHERE created_at >= ? ORDER BY created_at DESC';
+        const params = [cutoffDate.toISOString()];
+
+        const result = this.db.exec(query, params);
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToTimeEntry(result[0].columns, row));
+    }
+
     updateTimeEntry(id: number, updates: Partial<TimeEntry>): void {
         if (!this.db) {
             throw new Error('Database not initialized');
