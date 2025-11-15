@@ -3096,9 +3096,197 @@ function getCalendarHtml(): string {
             background-color: #2196f3;
             border-color: #1976d2;
         }
+        /* Stats panel styles */
+        .stats-panel {
+            max-width: 1400px;
+            margin: 20px auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 15px;
+        }
+
+        .stat-card {
+            background-color: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+            padding: 15px;
+        }
+
+        .stat-title {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--vscode-foreground);
+            font-family: 'Courier New', monospace;
+        }
+
+        .stat-subtitle {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 5px;
+        }
+
+        .stat-progress-bar {
+            height: 8px;
+            background: var(--vscode-editor-background);
+            border-radius: 4px;
+            overflow: hidden;
+            margin-top: 10px;
+            border: 1px solid var(--vscode-panel-border);
+        }
+
+        .stat-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4caf50 0%, #66bb6a 100%);
+            transition: width 0.3s ease;
+        }
+
+        .stat-progress-fill.warning {
+            background: linear-gradient(90deg, #ff9800 0%, #ffa726 100%);
+        }
+
+        .stat-progress-fill.complete {
+            background: linear-gradient(90deg, #2196f3 0%, #42a5f5 100%);
+        }
+
+        /* Filter panel styles */
+        .filters-panel {
+            max-width: 1400px;
+            margin: 20px auto;
+            padding: 15px;
+            background-color: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+        }
+
+        .filters-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--vscode-foreground);
+            font-size: 14px;
+        }
+
+        .filters-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .filter-label {
+            font-size: 12px;
+            color: var(--vscode-foreground);
+            font-weight: 500;
+        }
+
+        .filter-select {
+            padding: 6px 8px;
+            background-color: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 2px;
+            font-size: 12px;
+        }
+
+        .filter-checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+        }
+
+        /* Day number with total styles */
+        .fc-daygrid-day-top {
+            position: relative;
+        }
+
+        .day-total {
+            position: absolute;
+            top: 2px;
+            right: 4px;
+            font-size: 10px;
+            color: var(--vscode-descriptionForeground);
+            background: var(--vscode-badge-background);
+            color: var(--vscode-badge-foreground);
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-weight: 600;
+        }
     </style>
 </head>
 <body>
+    <!-- Statistics Panel -->
+    <div class="stats-panel">
+        <div class="stat-card">
+            <div class="stat-title">This Week</div>
+            <div class="stat-value" id="weekHours">0h 0m</div>
+            <div class="stat-subtitle" id="weekGoal">Goal: 40h (0%)</div>
+            <div class="stat-progress-bar">
+                <div class="stat-progress-fill" id="weekProgress" style="width: 0%"></div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-title">This Month</div>
+            <div class="stat-value" id="monthHours">0h 0m</div>
+            <div class="stat-subtitle" id="monthSubtitle">Billable: 0h | Non-billable: 0h</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-title">Current View</div>
+            <div class="stat-value" id="viewHours">0h 0m</div>
+            <div class="stat-subtitle" id="viewSubtitle">0 entries</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-title">Synergy Status</div>
+            <div class="stat-value" id="synergyStats" style="font-size: 16px;">-</div>
+            <div class="stat-subtitle" id="synergySubtitle">Submitted: 0 | Pending: 0</div>
+        </div>
+    </div>
+
+    <!-- Filters Panel -->
+    <div class="filters-panel">
+        <div class="filters-title">Filters</div>
+        <div class="filters-grid">
+            <div class="filter-group">
+                <label class="filter-label">Project</label>
+                <select id="filterProject" class="filter-select" onchange="applyFilters()">
+                    <option value="">All Projects</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Status</label>
+                <select id="filterStatus" class="filter-select" onchange="applyFilters()">
+                    <option value="">All Statuses</option>
+                    <option value="submitted">Submitted to Synergy</option>
+                    <option value="synced">Synced (Not Submitted)</option>
+                    <option value="billable">Billable (Not Synced)</option>
+                    <option value="non-billable">Non-Billable</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Options</label>
+                <div class="filter-checkbox-group">
+                    <input type="checkbox" id="filterBillableOnly" onchange="applyFilters()">
+                    <label for="filterBillableOnly">Billable Only</label>
+                </div>
+            </div>
+            <div class="filter-group">
+                <button onclick="clearFilters()" style="margin-top: 18px; padding: 6px 12px;">Clear Filters</button>
+            </div>
+        </div>
+    </div>
+
     <div id="calendar"></div>
 
     <!-- Legend -->
@@ -3420,6 +3608,191 @@ function getCalendarHtml(): string {
             return \`\${year}-\${month}-\${day}T\${hours}:\${minutes}\`;
         }
 
+        function applyFilters() {
+            const filterProjectId = document.getElementById('filterProject').value;
+            const filterStatus = document.getElementById('filterStatus').value;
+            const billableOnly = document.getElementById('filterBillableOnly').checked;
+
+            let filteredEvents = currentEvents.filter(event => {
+                // Filter by project
+                if (filterProjectId && event.extendedProps.projectId != filterProjectId) {
+                    return false;
+                }
+
+                // Filter by billable
+                if (billableOnly && !event.extendedProps.isBillable) {
+                    return false;
+                }
+
+                // Filter by status
+                if (filterStatus) {
+                    if (filterStatus === 'submitted' && !event.extendedProps.synergySubmitted) {
+                        return false;
+                    }
+                    if (filterStatus === 'synced' && (!event.extendedProps.synergySynced || event.extendedProps.synergySubmitted)) {
+                        return false;
+                    }
+                    if (filterStatus === 'billable' && (!event.extendedProps.isBillable || event.extendedProps.synergySynced)) {
+                        return false;
+                    }
+                    if (filterStatus === 'non-billable' && event.extendedProps.isBillable) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+
+            calendar.removeAllEvents();
+            calendar.addEventSource(filteredEvents);
+        }
+
+        function clearFilters() {
+            document.getElementById('filterProject').value = '';
+            document.getElementById('filterStatus').value = '';
+            document.getElementById('filterBillableOnly').checked = false;
+            applyFilters();
+        }
+
+        function updateStatistics() {
+            const now = new Date();
+
+            // Calculate week hours (Monday to Sunday)
+            const weekStart = new Date(now);
+            const day = weekStart.getDay();
+            const diff = weekStart.getDate() - day + (day === 0 ? -6 : 1); // Adjust to Monday
+            weekStart.setDate(diff);
+            weekStart.setHours(0, 0, 0, 0);
+
+            const weekEnd = new Date(weekStart);
+            weekEnd.setDate(weekEnd.getDate() + 7);
+
+            let weekSeconds = 0;
+            currentEvents.forEach(event => {
+                const eventStart = new Date(event.start);
+                if (eventStart >= weekStart && eventStart < weekEnd && event.extendedProps.duration) {
+                    weekSeconds += event.extendedProps.duration;
+                }
+            });
+
+            const weekHours = Math.floor(weekSeconds / 3600);
+            const weekMinutes = Math.floor((weekSeconds % 3600) / 60);
+            const weekPercent = Math.min(Math.round((weekSeconds / (40 * 3600)) * 100), 100);
+
+            document.getElementById('weekHours').textContent = \`\${weekHours}h \${weekMinutes}m\`;
+            document.getElementById('weekGoal').textContent = \`Goal: 40h (\${weekPercent}%)\`;
+
+            const weekProgressBar = document.getElementById('weekProgress');
+            weekProgressBar.style.width = weekPercent + '%';
+            weekProgressBar.className = 'stat-progress-fill';
+            if (weekPercent >= 100) {
+                weekProgressBar.className += ' complete';
+            } else if (weekPercent >= 80) {
+                weekProgressBar.className += ' warning';
+            }
+
+            // Calculate month hours
+            const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+            const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+            monthEnd.setHours(23, 59, 59, 999);
+
+            let monthSeconds = 0;
+            let monthBillable = 0;
+            let monthNonBillable = 0;
+
+            currentEvents.forEach(event => {
+                const eventStart = new Date(event.start);
+                if (eventStart >= monthStart && eventStart <= monthEnd && event.extendedProps.duration) {
+                    monthSeconds += event.extendedProps.duration;
+                    if (event.extendedProps.isBillable) {
+                        monthBillable += event.extendedProps.duration;
+                    } else {
+                        monthNonBillable += event.extendedProps.duration;
+                    }
+                }
+            });
+
+            const monthHours = Math.floor(monthSeconds / 3600);
+            const monthMinutes = Math.floor((monthSeconds % 3600) / 60);
+            const monthBillableHours = Math.floor(monthBillable / 3600);
+            const monthNonBillableHours = Math.floor(monthNonBillable / 3600);
+
+            document.getElementById('monthHours').textContent = \`\${monthHours}h \${monthMinutes}m\`;
+            document.getElementById('monthSubtitle').textContent = \`Billable: \${monthBillableHours}h | Non-billable: \${monthNonBillableHours}h\`;
+
+            // Calculate current view hours
+            const visibleEvents = calendar.getEvents();
+            let viewSeconds = 0;
+            visibleEvents.forEach(event => {
+                if (event.extendedProps.duration) {
+                    viewSeconds += event.extendedProps.duration;
+                }
+            });
+
+            const viewHours = Math.floor(viewSeconds / 3600);
+            const viewMinutes = Math.floor((viewSeconds % 3600) / 60);
+
+            document.getElementById('viewHours').textContent = \`\${viewHours}h \${viewMinutes}m\`;
+            document.getElementById('viewSubtitle').textContent = \`\${visibleEvents.length} entries\`;
+
+            // Calculate Synergy statistics
+            let submitted = 0;
+            let pending = 0;
+            let pendingHours = 0;
+
+            currentEvents.forEach(event => {
+                if (event.extendedProps.synergySubmitted) {
+                    submitted++;
+                } else {
+                    pending++;
+                    if (event.extendedProps.duration) {
+                        pendingHours += event.extendedProps.duration;
+                    }
+                }
+            });
+
+            const pendingHoursFormatted = Math.floor(pendingHours / 3600);
+            document.getElementById('synergyStats').textContent = \`\${pendingHoursFormatted}h pending\`;
+            document.getElementById('synergySubtitle').textContent = \`Submitted: \${submitted} | Pending: \${pending}\`;
+        }
+
+        function addDayTotals() {
+            // Remove existing day totals
+            document.querySelectorAll('.day-total').forEach(el => el.remove());
+
+            // Calculate daily totals
+            const dailyTotals = {};
+            currentEvents.forEach(event => {
+                const dateKey = new Date(event.start).toISOString().split('T')[0];
+                if (!dailyTotals[dateKey]) {
+                    dailyTotals[dateKey] = 0;
+                }
+                if (event.extendedProps.duration) {
+                    dailyTotals[dateKey] += event.extendedProps.duration;
+                }
+            });
+
+            // Add totals to day cells
+            Object.keys(dailyTotals).forEach(dateKey => {
+                const seconds = dailyTotals[dateKey];
+                const hours = Math.floor(seconds / 3600);
+                const minutes = Math.floor((seconds % 3600) / 60);
+                const totalText = hours > 0 ? \`\${hours}h \${minutes}m\` : \`\${minutes}m\`;
+
+                // Find the day cell
+                const dayCell = document.querySelector(\`[data-date="\${dateKey}"]\`);
+                if (dayCell) {
+                    const dayTop = dayCell.querySelector('.fc-daygrid-day-top');
+                    if (dayTop) {
+                        const totalSpan = document.createElement('div');
+                        totalSpan.className = 'day-total';
+                        totalSpan.textContent = totalText;
+                        dayTop.appendChild(totalSpan);
+                    }
+                }
+            });
+        }
+
         // Handle messages from extension
         window.addEventListener('message', event => {
             const message = event.data;
@@ -3427,8 +3800,9 @@ function getCalendarHtml(): string {
             switch (message.command) {
                 case 'updateEvents':
                     currentEvents = message.events;
-                    calendar.removeAllEvents();
-                    calendar.addEventSource(message.events);
+                    applyFilters();
+                    updateStatistics();
+                    addDayTotals();
                     break;
 
                 case 'updateProjects':
@@ -3440,6 +3814,16 @@ function getCalendarHtml(): string {
                         option.value = project.id;
                         option.textContent = project.name;
                         projectSelect.appendChild(option);
+                    });
+
+                    // Also populate filter dropdown
+                    const filterProject = document.getElementById('filterProject');
+                    filterProject.innerHTML = '<option value="">All Projects</option>';
+                    projects.forEach(project => {
+                        const option = document.createElement('option');
+                        option.value = project.id;
+                        option.textContent = project.name;
+                        filterProject.appendChild(option);
                     });
                     break;
 
