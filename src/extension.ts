@@ -2589,55 +2589,45 @@ async function showCalendar(context: vscode.ExtensionContext): Promise<void> {
 }
 
 function sendCalendarData(panel: vscode.WebviewPanel, startDate: string, endDate: string): void {
-    const entries = db.getTimeEntriesForDateRange(startDate, endDate);
+    // Fetch groups from database (new group-based architecture)
+    const groups = db.getTimeEntryGroupsForDateRange(startDate, endDate);
     const projects = db.getAllProjects();
     const customers = db.getAllCustomers();
 
-    // Group entries by project_id and date
-    const groupedEntries = new Map<string, typeof entries>();
-
-    entries.forEach(entry => {
-        const entryDate = new Date(entry.start_time).toISOString().split('T')[0];
-        const groupKey = `${entry.project_id}_${entryDate}`;
-
-        if (!groupedEntries.has(groupKey)) {
-            groupedEntries.set(groupKey, []);
-        }
-        groupedEntries.get(groupKey)!.push(entry);
-    });
-
-    // Transform grouped entries into calendar events
+    // Transform groups into calendar events
     const events: any[] = [];
 
-    groupedEntries.forEach((groupEntries, groupKey) => {
-        const firstEntry = groupEntries[0];
-        const project = projects.find(p => p.id === firstEntry.project_id);
-        const customer = customers.find(c => c.id === firstEntry.customer_id);
+    groups.forEach(group => {
+        const project = projects.find(p => p.id === group.project_id);
+        const customer = customers.find(c => c.id === group.customer_id);
 
-        // Calculate total duration and check status
-        const totalDuration = groupEntries.reduce((sum, e) => sum + (e.duration || 0), 0);
-        const totalHours = (totalDuration / 3600).toFixed(2);
+        // Fetch individual entries for this group
+        const groupEntries = db.getTimeEntriesByGroupId(group.id!);
 
-        // Check if any entry in group is synced or submitted
-        const hasSubmitted = groupEntries.some(e => e.synergy_submitted);
-        const hasSynced = groupEntries.some(e => e.synergy_synced);
-        const allBillable = groupEntries.every(e => e.is_billable);
+        // Calculate total hours from group
+        const totalHours = (group.total_duration / 3600).toFixed(2);
 
-        // Determine color based on group status
+        // Determine color based on group sync status
         let backgroundColor: string;
         let borderColor: string;
         let title = project?.name || 'Unknown Project';
+
+        // Add task code to title if present
+        if (group.task_code) {
+            title += ` [${group.task_code}]`;
+        }
+
         title += ` (${totalHours}h)`;
 
-        if (hasSubmitted) {
+        if (group.synergy_submitted) {
             backgroundColor = '#9c27b0';
             borderColor = '#7b1fa2';
             title = '✓ ' + title;
-        } else if (hasSynced) {
+        } else if (group.synergy_synced) {
             backgroundColor = '#ff9800';
             borderColor = '#f57c00';
             title = '⚠ ' + title;
-        } else if (allBillable) {
+        } else if (group.is_billable) {
             backgroundColor = '#4caf50';
             borderColor = '#388e3c';
         } else {
@@ -2645,26 +2635,16 @@ function sendCalendarData(panel: vscode.WebviewPanel, startDate: string, endDate
             borderColor = '#1976d2';
         }
 
-        // Group is editable only if no entries are synced/submitted
-        const isEditable = !hasSynced && !hasSubmitted;
+        // Group is editable only if not synced/submitted
+        const isEditable = !group.synergy_synced && !group.synergy_submitted;
 
-        // Find earliest start and latest end for display
-        const earliestStart = groupEntries.reduce((min, e) =>
-            e.start_time < min ? e.start_time : min,
-            groupEntries[0].start_time
-        );
-        const latestEnd = groupEntries.reduce((max, e) =>
-            e.end_time && e.end_time > max ? e.end_time : max,
-            groupEntries[0].end_time || groupEntries[0].start_time
-        );
-
-        // Use the date with a single time block (not all-day)
-        const entryDate = earliestStart.split('T')[0];
+        // Use the entry date with a display time block (not all-day)
+        const entryDate = group.entry_date;
         const startTime = `${entryDate}T09:00:00`;
         const endTime = `${entryDate}T${(9 + parseFloat(totalHours)).toString().padStart(2, '0')}:00:00`;
 
         events.push({
-            id: `group_${groupKey}`,
+            id: `group_${group.id}`,
             title: title,
             start: startTime,
             end: endTime,
@@ -2675,18 +2655,20 @@ function sendCalendarData(panel: vscode.WebviewPanel, startDate: string, endDate
             durationEditable: false, // Cannot resize groups, only move them
             extendedProps: {
                 isGroup: true,
-                groupKey: groupKey,
-                entryIds: groupEntries.map(e => e.id),
+                groupId: group.id,
+                groupKey: `${group.project_id}_${group.entry_date}_${group.task_code || ''}`,
+                entryIds: groupEntries.map(e => e.id!),
                 entryCount: groupEntries.length,
-                projectId: firstEntry.project_id,
+                projectId: group.project_id,
                 projectName: project?.name,
-                customerId: firstEntry.customer_id,
+                customerId: group.customer_id,
                 customerName: customer?.account_name,
-                duration: totalDuration,
+                taskCode: group.task_code,
+                duration: group.total_duration,
                 totalHours: totalHours,
-                isBillable: allBillable,
-                synergySynced: hasSynced,
-                synergySubmitted: hasSubmitted,
+                isBillable: group.is_billable,
+                synergySynced: group.synergy_synced,
+                synergySubmitted: group.synergy_submitted,
                 entries: groupEntries.map(e => ({
                     id: e.id,
                     start: e.start_time,

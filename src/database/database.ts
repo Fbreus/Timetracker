@@ -1147,6 +1147,23 @@ export class TimeTrackerDatabase {
         return result[0].values.map(row => this.rowToTimeEntry(result[0].columns, row));
     }
 
+    getTimeEntriesByGroupId(groupId: number): TimeEntry[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT * FROM time_entries WHERE group_id = ? ORDER BY start_time ASC',
+            [groupId]
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToTimeEntry(result[0].columns, row));
+    }
+
     // Settings operations
     setSetting(key: string, value: string): void {
         if (!this.db) {
