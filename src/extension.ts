@@ -2705,6 +2705,7 @@ function sendSingleEntry(panel: vscode.WebviewPanel, id: number): void {
                 projectName: project?.name,
                 customerId: entry.customer_id,
                 customerName: customer?.account_name,
+                taskCode: entry.task_code,
                 start: entry.start_time,
                 end: entry.end_time,
                 duration: entry.duration,
@@ -2741,6 +2742,7 @@ async function createTimeEntry(panel: vscode.WebviewPanel, entry: any): Promise<
         const timeEntry = {
             project_id: entry.projectId,
             customer_id: entry.customerId || undefined,
+            task_code: entry.taskCode || undefined,
             start_time: entry.start,
             end_time: entry.end,
             duration: entry.duration,
@@ -2782,6 +2784,7 @@ async function updateTimeEntry(panel: vscode.WebviewPanel, id: number, updates: 
 
         if (updates.projectId !== undefined) { dbUpdates.project_id = updates.projectId; }
         if (updates.customerId !== undefined) { dbUpdates.customer_id = updates.customerId; }
+        if (updates.taskCode !== undefined) { dbUpdates.task_code = updates.taskCode; }
         if (updates.start !== undefined) { dbUpdates.start_time = updates.start; }
         if (updates.end !== undefined) { dbUpdates.end_time = updates.end; }
         if (updates.duration !== undefined) { dbUpdates.duration = updates.duration; }
@@ -3459,6 +3462,14 @@ function getCalendarHtml(): string {
                     </select>
                 </div>
 
+                <div class="form-group">
+                    <label for="taskCode">Task Code (optional)</label>
+                    <input type="text" id="taskCode" placeholder="e.g., DEV, TESTING, MEETINGS">
+                    <small style="color: var(--vscode-descriptionForeground); display: block; margin-top: 4px;">
+                        Used to group entries with different task types
+                    </small>
+                </div>
+
                 <div class="form-group time-inputs">
                     <div>
                         <label for="startTime">Start Time *</label>
@@ -3544,6 +3555,11 @@ function getCalendarHtml(): string {
                 </div>
 
                 <div class="form-group">
+                    <label for="templateTaskCode">Task Code (optional)</label>
+                    <input type="text" id="templateTaskCode" placeholder="e.g., DEV, TESTING, MEETINGS">
+                </div>
+
+                <div class="form-group">
                     <label for="templateDuration">Duration (minutes) *</label>
                     <input type="number" id="templateDuration" required min="1" value="60">
                 </div>
@@ -3606,6 +3622,11 @@ function getCalendarHtml(): string {
                     <select id="recurringCustomer">
                         <option value="">None</option>
                     </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="recurringTaskCode">Task Code (optional)</label>
+                    <input type="text" id="recurringTaskCode" placeholder="e.g., DEV, TESTING, MEETINGS">
                 </div>
 
                 <div class="form-group">
@@ -3750,6 +3771,7 @@ function getCalendarHtml(): string {
 
                 const projectId = parseInt(document.getElementById('recurringProject').value);
                 const customerId = document.getElementById('recurringCustomer').value ? parseInt(document.getElementById('recurringCustomer').value) : null;
+                const taskCode = document.getElementById('recurringTaskCode').value.trim() || null;
                 const startTime = document.getElementById('recurringStartTime').value;
                 const endTime = document.getElementById('recurringEndTime').value;
                 const weeks = parseInt(document.getElementById('recurringWeeks').value);
@@ -3804,6 +3826,7 @@ function getCalendarHtml(): string {
                             entry: {
                                 projectId: projectId,
                                 customerId: customerId,
+                                taskCode: taskCode,
                                 start: entryStart.toISOString(),
                                 end: entryEnd.toISOString(),
                                 duration: duration,
@@ -3862,6 +3885,7 @@ function getCalendarHtml(): string {
                 const name = document.getElementById('templateName').value;
                 const projectId = parseInt(document.getElementById('templateProject').value);
                 const customerId = document.getElementById('templateCustomer').value ? parseInt(document.getElementById('templateCustomer').value) : null;
+                const taskCode = document.getElementById('templateTaskCode').value.trim() || null;
                 const duration = parseInt(document.getElementById('templateDuration').value);
                 const notes = document.getElementById('templateNotes').value;
                 const isBillable = document.getElementById('templateBillable').checked;
@@ -3875,6 +3899,7 @@ function getCalendarHtml(): string {
                     projectId: projectId,
                     projectName: projectName,
                     customerId: customerId,
+                    taskCode: taskCode,
                     duration: duration,
                     notes: notes,
                     isBillable: isBillable
@@ -3901,6 +3926,7 @@ function getCalendarHtml(): string {
                         entry: {
                             projectId: template.projectId,
                             customerId: template.customerId,
+                            taskCode: template.taskCode,
                             start: startDate.toISOString(),
                             end: endDate.toISOString(),
                             duration: template.duration * 60,
@@ -4022,6 +4048,7 @@ function getCalendarHtml(): string {
                 document.getElementById('entryId').value = event.id;
                 document.getElementById('projectSelect').value = event.extendedProps.projectId;
                 document.getElementById('customerSelect').value = event.extendedProps.customerId || '';
+                document.getElementById('taskCode').value = event.extendedProps.taskCode || '';
                 document.getElementById('startTime').value = formatDateTimeLocal(event.start);
                 document.getElementById('endTime').value = event.end ? formatDateTimeLocal(event.end) : '';
                 document.getElementById('notes').value = event.extendedProps.notes || '';
@@ -4117,6 +4144,7 @@ function getCalendarHtml(): string {
             const entryId = document.getElementById('entryId').value;
             const projectId = parseInt(document.getElementById('projectSelect').value);
             const customerId = document.getElementById('customerSelect').value ? parseInt(document.getElementById('customerSelect').value) : null;
+            const taskCode = document.getElementById('taskCode').value.trim() || null;
             const startTime = new Date(document.getElementById('startTime').value);
             const endTime = new Date(document.getElementById('endTime').value);
             const notes = document.getElementById('notes').value;
@@ -4131,6 +4159,7 @@ function getCalendarHtml(): string {
                     updates: {
                         projectId,
                         customerId,
+                        taskCode,
                         start: startTime.toISOString(),
                         end: endTime.toISOString(),
                         duration,
@@ -4145,6 +4174,7 @@ function getCalendarHtml(): string {
                     entry: {
                         projectId,
                         customerId,
+                        taskCode,
                         start: startTime.toISOString(),
                         end: endTime.toISOString(),
                         duration,
@@ -4516,6 +4546,7 @@ function getCalendarHtml(): string {
                 projectId: selectedEvent.extendedProps.projectId,
                 projectName: selectedEvent.extendedProps.projectName,
                 customerId: selectedEvent.extendedProps.customerId,
+                taskCode: selectedEvent.extendedProps.taskCode,
                 duration: duration,
                 notes: selectedEvent.extendedProps.notes || '',
                 isBillable: selectedEvent.extendedProps.isBillable
@@ -4740,6 +4771,7 @@ function getCalendarHtml(): string {
                             projectName: entryData.projectName,
                             customerId: entryData.customerId,
                             customerName: entryData.customerName,
+                            taskCode: entryData.taskCode,
                             duration: entryData.duration,
                             notes: entryData.notes,
                             isBillable: entryData.isBillable,
