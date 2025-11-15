@@ -1873,25 +1873,14 @@ function getTimeEntriesHtml(): string {
                 for (let i = 0; i < projectSelect.options.length; i++) {
                     if (projectSelect.options[i].value === entry.synergy_project_no) {
                         projectSelect.selectedIndex = i;
-                        // Trigger change event to auto-fill customer if needed
+                        // Trigger change event which may auto-fill customer from project
                         projectSelect.dispatchEvent(new Event('change'));
                         break;
                     }
                 }
             }
 
-            // Auto-fill customer/client field from entry
-            const clientField = document.getElementById('synergyClient');
-            console.log('[DEBUG] Client field element:', clientField);
-            console.log('[DEBUG] Attempting to set customer to:', entry.customerName);
-            if (clientField && entry.customerName) {
-                clientField.value = entry.customerName;
-                console.log('[DEBUG] Customer field set successfully');
-            } else {
-                console.log('[DEBUG] Skipping customer auto-fill - field or customerName missing');
-            }
-
-            // Auto-fill form fields
+            // Auto-fill form fields (do this BEFORE setting customer)
             const startDate = new Date(entry.start_time);
             document.getElementById('synergyDate').value = startDate.toISOString().split('T')[0];
 
@@ -1939,6 +1928,19 @@ function getTimeEntriesHtml(): string {
                     </div>
                 </div>
             \`;
+
+            // IMPORTANT: Set customer from entry LAST, after all project selection events have fired
+            // This ensures the entry's customer data takes precedence over any auto-fill from project data
+            const clientField = document.getElementById('synergyClient');
+            console.log('[DEBUG] Client field element:', clientField);
+            console.log('[DEBUG] Attempting to set customer to:', entry.customerName);
+            if (clientField && entry.customerName) {
+                clientField.value = entry.customerName;
+                console.log('[DEBUG] Customer field set successfully to:', entry.customerName);
+            } else {
+                console.log('[DEBUG] Skipping customer auto-fill - field or customerName missing');
+                console.log('[DEBUG] Current customer field value:', clientField ? clientField.value : 'N/A');
+            }
 
             // Show modal
             document.getElementById('synergyModal').classList.add('active');
