@@ -3495,6 +3495,26 @@ function getCalendarHtml(): string {
         </div>
     </div>
 
+    <!-- Duplicate Entry Modal -->
+    <div id="duplicateModal" class="modal">
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h2>Duplicate Entry</h2>
+                <button class="close" onclick="closeDuplicateModal()">&times;</button>
+            </div>
+            <form id="duplicateForm">
+                <div class="form-group">
+                    <label for="duplicateDate">New Date *</label>
+                    <input type="date" id="duplicateDate" required>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="secondary" onclick="closeDuplicateModal()">Cancel</button>
+                    <button type="submit">Duplicate</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <script>
         const vscode = acquireVsCodeApi();
         let calendar;
@@ -3503,6 +3523,7 @@ function getCalendarHtml(): string {
         let customers = [];
         let selectedEvent = null;
         let templates = [];
+        let duplicateEntryId = null;
 
         document.addEventListener('DOMContentLoaded', function() {
             const calendarEl = document.getElementById('calendar');
@@ -3611,6 +3632,33 @@ function getCalendarHtml(): string {
                         endDate: viewEnd
                     });
                 }, 1000);
+            });
+
+            // Set up duplicate form submission
+            document.getElementById('duplicateForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                const newDate = document.getElementById('duplicateDate').value;
+
+                if (duplicateEntryId && newDate) {
+                    vscode.postMessage({
+                        command: 'duplicateEntry',
+                        id: duplicateEntryId,
+                        newDate: newDate
+                    });
+                    closeDuplicateModal();
+
+                    // Refresh calendar
+                    setTimeout(() => {
+                        const dateObj = new Date(newDate);
+                        const viewStart = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1).toISOString();
+                        const viewEnd = new Date(dateObj.getFullYear(), dateObj.getMonth() + 2, 0).toISOString();
+                        vscode.postMessage({
+                            command: 'getEntries',
+                            startDate: viewStart,
+                            endDate: viewEnd
+                        });
+                    }, 500);
+                }
             });
         });
 
@@ -3820,16 +3868,22 @@ function getCalendarHtml(): string {
         function duplicateEntry() {
             const entryId = document.getElementById('entryId').value;
             if (entryId) {
-                const newDate = prompt('Enter the new date (YYYY-MM-DD):');
-                if (newDate) {
-                    vscode.postMessage({
-                        command: 'duplicateEntry',
-                        id: parseInt(entryId),
-                        newDate: newDate
-                    });
-                    closeModal();
-                }
+                duplicateEntryId = parseInt(entryId);
+
+                // Set default date to tomorrow
+                const tomorrow = new Date();
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                document.getElementById('duplicateDate').value = tomorrow.toISOString().split('T')[0];
+
+                // Show duplicate modal
+                document.getElementById('duplicateModal').style.display = 'block';
+                closeModal();
             }
+        }
+
+        function closeDuplicateModal() {
+            document.getElementById('duplicateModal').style.display = 'none';
+            duplicateEntryId = null;
         }
 
         function formatDateTimeLocal(date) {
