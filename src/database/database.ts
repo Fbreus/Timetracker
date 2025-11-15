@@ -481,17 +481,211 @@ export class TimeTrackerDatabase {
         this.saveToFile();
     }
 
+    // Time entry group operations
+    private getOrCreateGroup(projectId: number, customerId: number | undefined, entryDate: string, taskCode: string | undefined): number {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        // Try to find existing group
+        const result = this.db.exec(
+            'SELECT id FROM time_entry_groups WHERE project_id = ? AND entry_date = ? AND (task_code = ? OR (task_code IS NULL AND ? IS NULL))',
+            [projectId, entryDate, taskCode || null, taskCode || null]
+        );
+
+        if (result.length > 0 && result[0].values.length > 0) {
+            return result[0].values[0][0] as number;
+        }
+
+        // Create new group
+        this.db.run(
+            `INSERT INTO time_entry_groups (project_id, customer_id, entry_date, task_code, total_duration, is_billable)
+             VALUES (?, ?, ?, ?, 0, 0)`,
+            [projectId, customerId || null, entryDate, taskCode || null]
+        );
+
+        const newResult = this.db.exec('SELECT last_insert_rowid() as id');
+        return newResult[0].values[0][0] as number;
+    }
+
+    private recalculateGroupTotals(groupId: number): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        // Get all entries in this group
+        const entries = this.db.exec(
+            'SELECT duration, is_billable FROM time_entries WHERE group_id = ?',
+            [groupId]
+        );
+
+        if (entries.length === 0 || entries[0].values.length === 0) {
+            // No entries in group, delete it
+            this.db.run('DELETE FROM time_entry_groups WHERE id = ?', [groupId]);
+            return;
+        }
+
+        // Calculate totals
+        let totalDuration = 0;
+        let allBillable = true;
+
+        entries[0].values.forEach(row => {
+            const duration = row[0] as number || 0;
+            const isBillable = row[1] as number;
+            totalDuration += duration;
+            if (!isBillable) {
+                allBillable = false;
+            }
+        });
+
+        // Update group
+        this.db.run(
+            'UPDATE time_entry_groups SET total_duration = ?, is_billable = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+            [totalDuration, allBillable ? 1 : 0, groupId]
+        );
+    }
+
+    getTimeEntryGroup(id: number): TimeEntryGroup | undefined {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec('SELECT * FROM time_entry_groups WHERE id = ?', [id]);
+
+        if (result.length === 0 || result[0].values.length === 0) {
+            return undefined;
+        }
+
+        return this.rowToTimeEntryGroup(result[0].columns, result[0].values[0]);
+    }
+
+    getTimeEntryGroupsForDateRange(startDate: string, endDate: string): TimeEntryGroup[] {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT * FROM time_entry_groups WHERE entry_date >= ? AND entry_date <= ? ORDER BY entry_date, project_id',
+            [startDate, endDate]
+        );
+
+        if (result.length === 0) {
+            return [];
+        }
+
+        return result[0].values.map(row => this.rowToTimeEntryGroup(result[0].columns, row));
+    }
+
+    updateTimeEntryGroup(id: number, updates: Partial<TimeEntryGroup>): void {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const setClauses: string[] = [];
+        const values: any[] = [];
+
+        if (updates.notes !== undefined) {
+            setClauses.push('notes = ?');
+            values.push(updates.notes);
+        }
+        if (updates.synergy_synced !== undefined) {
+            setClauses.push('synergy_synced = ?');
+            values.push(updates.synergy_synced ? 1 : 0);
+        }
+        if (updates.synergy_sync_date !== undefined) {
+            setClauses.push('synergy_sync_date = ?');
+            values.push(updates.synergy_sync_date);
+        }
+        if (updates.synergy_id !== undefined) {
+            setClauses.push('synergy_id = ?');
+            values.push(updates.synergy_id);
+        }
+        if (updates.synergy_submitted !== undefined) {
+            setClauses.push('synergy_submitted = ?');
+            values.push(updates.synergy_submitted ? 1 : 0);
+        }
+        if (updates.synergy_submission_date !== undefined) {
+            setClauses.push('synergy_submission_date = ?');
+            values.push(updates.synergy_submission_date);
+        }
+        if (updates.synergy_customer_id !== undefined) {
+            setClauses.push('synergy_customer_id = ?');
+            values.push(updates.synergy_customer_id);
+        }
+        if (updates.synergy_project_no !== undefined) {
+            setClauses.push('synergy_project_no = ?');
+            values.push(updates.synergy_project_no);
+        }
+        if (updates.synergy_response !== undefined) {
+            setClauses.push('synergy_response = ?');
+            values.push(updates.synergy_response);
+        }
+
+        if (setClauses.length === 0) {
+            return;
+        }
+
+        setClauses.push('updated_at = CURRENT_TIMESTAMP');
+        values.push(id);
+
+        this.db.run(
+            `UPDATE time_entry_groups SET ${setClauses.join(', ')} WHERE id = ?`,
+            values
+        );
+
+        this.saveToFile();
+    }
+
+    private rowToTimeEntryGroup(columns: string[], row: any[]): TimeEntryGroup {
+        const group: any = {};
+        columns.forEach((col, idx) => {
+            group[col] = row[idx];
+        });
+
+        return {
+            id: group.id,
+            project_id: group.project_id,
+            customer_id: group.customer_id,
+            entry_date: group.entry_date,
+            task_code: group.task_code,
+            total_duration: group.total_duration,
+            notes: group.notes,
+            is_billable: Boolean(group.is_billable),
+            synergy_synced: Boolean(group.synergy_synced),
+            synergy_sync_date: group.synergy_sync_date,
+            synergy_id: group.synergy_id,
+            synergy_submitted: Boolean(group.synergy_submitted),
+            synergy_submission_date: group.synergy_submission_date,
+            synergy_customer_id: group.synergy_customer_id,
+            synergy_project_no: group.synergy_project_no,
+            synergy_response: group.synergy_response,
+            created_at: group.created_at,
+            updated_at: group.updated_at
+        };
+    }
+
     // Time entry operations
     createTimeEntry(entry: TimeEntry): number {
         if (!this.db) {
             throw new Error('Database not initialized');
         }
 
+        // Extract date from start_time for grouping
+        const entryDate = entry.start_time.split('T')[0];
+
+        // Get or create the group for this entry
+        const groupId = this.getOrCreateGroup(
+            entry.project_id,
+            entry.customer_id,
+            entryDate,
+            entry.task_code
+        );
+
         this.db.run(
             `INSERT INTO time_entries (project_id, customer_id, start_time, end_time, duration, is_manual, notes, is_billable,
-             synergy_synced, synergy_sync_date, synergy_id, synergy_submitted, synergy_submission_date,
+             task_code, group_id, synergy_synced, synergy_sync_date, synergy_id, synergy_submitted, synergy_submission_date,
              synergy_customer_id, synergy_project_no, synergy_response)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 entry.project_id,
                 entry.customer_id || null,
@@ -501,6 +695,8 @@ export class TimeTrackerDatabase {
                 entry.is_manual ? 1 : 0,
                 entry.notes || null,
                 entry.is_billable ? 1 : 0,
+                entry.task_code || null,
+                groupId,
                 entry.synergy_synced ? 1 : 0,
                 entry.synergy_sync_date || null,
                 entry.synergy_id || null,
@@ -513,8 +709,13 @@ export class TimeTrackerDatabase {
         );
 
         const result = this.db.exec('SELECT last_insert_rowid() as id');
+        const entryId = result[0].values[0][0] as number;
+
+        // Recalculate group totals
+        this.recalculateGroupTotals(groupId);
+
         this.saveToFile();
-        return result[0].values[0][0] as number;
+        return entryId;
     }
 
     getTimeEntry(id: number): TimeEntry | undefined {
@@ -628,12 +829,45 @@ export class TimeTrackerDatabase {
             throw new Error('Database not initialized');
         }
 
+        // Get current entry to know the old group
+        const currentEntry = this.getTimeEntryById(id);
+        if (!currentEntry) {
+            throw new Error('Time entry not found');
+        }
+        const oldGroupId = currentEntry.group_id;
+
         const fields: string[] = [];
         const values: any[] = [];
+
+        // Check if we need to change groups (project, date, or task_code changed)
+        let needsRegroup = false;
+        if (updates.start_time !== undefined && updates.start_time.split('T')[0] !== currentEntry.start_time.split('T')[0]) {
+            needsRegroup = true;
+        }
+        if (updates.task_code !== undefined && updates.task_code !== currentEntry.task_code) {
+            needsRegroup = true;
+        }
+
+        if (needsRegroup && updates.start_time) {
+            // Create/find new group
+            const entryDate = updates.start_time.split('T')[0];
+            const newGroupId = this.getOrCreateGroup(
+                currentEntry.project_id,
+                updates.customer_id !== undefined ? updates.customer_id : currentEntry.customer_id,
+                entryDate,
+                updates.task_code !== undefined ? updates.task_code : currentEntry.task_code
+            );
+            fields.push('group_id = ?');
+            values.push(newGroupId);
+        }
 
         if (updates.customer_id !== undefined) {
             fields.push('customer_id = ?');
             values.push(updates.customer_id);
+        }
+        if (updates.start_time !== undefined) {
+            fields.push('start_time = ?');
+            values.push(updates.start_time);
         }
         if (updates.end_time !== undefined) {
             fields.push('end_time = ?');
@@ -650,6 +884,10 @@ export class TimeTrackerDatabase {
         if (updates.is_billable !== undefined) {
             fields.push('is_billable = ?');
             values.push(updates.is_billable ? 1 : 0);
+        }
+        if (updates.task_code !== undefined) {
+            fields.push('task_code = ?');
+            values.push(updates.task_code);
         }
         if (updates.synergy_synced !== undefined) {
             fields.push('synergy_synced = ?');
@@ -692,6 +930,20 @@ export class TimeTrackerDatabase {
                 `UPDATE time_entries SET ${fields.join(', ')} WHERE id = ?`,
                 values
             );
+
+            // Recalculate old group (if it exists)
+            if (oldGroupId) {
+                this.recalculateGroupTotals(oldGroupId);
+            }
+
+            // If regrouped, also recalculate new group
+            if (needsRegroup) {
+                const updatedEntry = this.getTimeEntryById(id);
+                if (updatedEntry && updatedEntry.group_id) {
+                    this.recalculateGroupTotals(updatedEntry.group_id);
+                }
+            }
+
             this.saveToFile();
         }
     }
@@ -701,7 +953,17 @@ export class TimeTrackerDatabase {
             throw new Error('Database not initialized');
         }
 
+        // Get the entry to know which group to recalculate
+        const entry = this.getTimeEntryById(id);
+        const groupId = entry?.group_id;
+
         this.db.run('DELETE FROM time_entries WHERE id = ?', [id]);
+
+        // Recalculate group totals (will auto-delete if no entries left)
+        if (groupId) {
+            this.recalculateGroupTotals(groupId);
+        }
+
         this.saveToFile();
     }
 
