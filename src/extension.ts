@@ -2852,10 +2852,23 @@ function sendCalendarData(panel: vscode.WebviewPanel, startDate: string, endDate
         // Group is editable only if not synced/submitted
         const isEditable = !group.synergy_synced && !group.synergy_submitted;
 
-        // Use the entry date with a display time block (not all-day)
+        // Calculate actual start and end times from all entries in the group
+        let earliestStart = groupEntries[0]?.start_time;
+        let latestEnd = groupEntries[0]?.end_time;
+
+        groupEntries.forEach(entry => {
+            if (entry.start_time && (!earliestStart || entry.start_time < earliestStart)) {
+                earliestStart = entry.start_time;
+            }
+            if (entry.end_time && (!latestEnd || entry.end_time > latestEnd)) {
+                latestEnd = entry.end_time;
+            }
+        });
+
+        // Fallback to date-based times if no valid times found
         const entryDate = group.entry_date;
-        const startTime = `${entryDate}T09:00:00`;
-        const endTime = `${entryDate}T${(9 + parseFloat(totalHours)).toString().padStart(2, '0')}:00:00`;
+        const startTime = earliestStart || `${entryDate}T09:00:00`;
+        const endTime = latestEnd || `${entryDate}T${(9 + parseFloat(totalHours)).toString().padStart(2, '0')}:00:00`;
 
         events.push({
             id: `group_${group.id}`,
