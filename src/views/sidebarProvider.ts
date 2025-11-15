@@ -73,6 +73,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 case 'showDashboard':
                     await vscode.commands.executeCommand('timetracker.showDashboard');
                     break;
+                case 'showCalendar':
+                    await vscode.commands.executeCommand('timetracker.showCalendar');
+                    break;
                 case 'addManual':
                     await vscode.commands.executeCommand('timetracker.addManualEntry');
                     break;
@@ -535,6 +538,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             <div class="action-links">
                 <a class="action-link" onclick="viewTimeEntries()">View Entries</a>
                 <a class="action-link" onclick="showDashboard()">Dashboard</a>
+                <a class="action-link" onclick="showCalendar()">Calendar</a>
                 <a class="action-link" onclick="addManualEntry()">Manual Entry</a>
                 <a class="action-link" onclick="exportData()">Export</a>
                 <a class="action-link" onclick="submitToSynergy()">Submit to Synergy</a>
@@ -792,6 +796,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
         function showDashboard() {
             vscode.postMessage({ type: 'showDashboard' });
+        }
+
+        function showCalendar() {
+            vscode.postMessage({ type: 'showCalendar' });
         }
 
         function addManualEntry() {
