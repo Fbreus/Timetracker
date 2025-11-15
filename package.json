@@ -2,7 +2,7 @@
   "name": "vscode-time-tracker",
   "displayName": "Time Tracker",
   "description": "Automatic time tracking for VS Code projects with analytics dashboard, calendar view, Synergy PSA integration, Quick Switch, and Pomodoro timer",
-  "version": "2.9.0",
+  "version": "2.9.1",
   "publisher": "timetracker",
   "license": "MIT",
   "repository": {

@@ -4811,19 +4811,40 @@ function getCalendarHtml(): string {
                 return;
             }
 
+            let copiedCount = 0;
             weekEntries.forEach(event => {
+                // Validate that we have a valid start date
+                if (!event.start) {
+                    console.error('Event missing start time:', event);
+                    return;
+                }
+
                 const originalStart = new Date(event.start);
+
+                // Check if the date is valid
+                if (isNaN(originalStart.getTime())) {
+                    console.error('Invalid start date:', event.start);
+                    return;
+                }
+
                 const newStart = new Date(originalStart);
                 newStart.setDate(newStart.getDate() + 7); // Add 7 days
 
-                const originalEnd = event.end ? new Date(event.end) : null;
-                const newEnd = originalEnd ? new Date(originalEnd.getTime() + 7 * 24 * 60 * 60 * 1000) : null;
+                let newEnd = null;
+                if (event.end) {
+                    const originalEnd = new Date(event.end);
+                    // Check if end date is valid
+                    if (!isNaN(originalEnd.getTime())) {
+                        newEnd = new Date(originalEnd.getTime() + 7 * 24 * 60 * 60 * 1000);
+                    }
+                }
 
                 vscode.postMessage({
                     command: 'createEntry',
                     entry: {
                         projectId: event.extendedProps.projectId,
                         customerId: event.extendedProps.customerId,
+                        taskCode: event.extendedProps.taskCode,
                         start: newStart.toISOString(),
                         end: newEnd ? newEnd.toISOString() : null,
                         duration: event.extendedProps.duration,
@@ -4831,19 +4852,22 @@ function getCalendarHtml(): string {
                         isBillable: event.extendedProps.isBillable
                     }
                 });
+                copiedCount++;
             });
 
-            setTimeout(() => {
-                const nextWeekStart = new Date(weekStart);
-                nextWeekStart.setDate(nextWeekStart.getDate() + 7);
-                const startDate = new Date(nextWeekStart.getFullYear(), nextWeekStart.getMonth(), 1).toISOString();
-                const endDate = new Date(nextWeekStart.getFullYear(), nextWeekStart.getMonth() + 2, 0).toISOString();
-                vscode.postMessage({
-                    command: 'getEntries',
-                    startDate: startDate,
-                    endDate: endDate
-                });
-            }, 500);
+            if (copiedCount > 0) {
+                setTimeout(() => {
+                    const nextWeekStart = new Date(weekStart);
+                    nextWeekStart.setDate(nextWeekStart.getDate() + 7);
+                    const startDate = new Date(nextWeekStart.getFullYear(), nextWeekStart.getMonth(), 1).toISOString();
+                    const endDate = new Date(nextWeekStart.getFullYear(), nextWeekStart.getMonth() + 2, 0).toISOString();
+                    vscode.postMessage({
+                        command: 'getEntries',
+                        startDate: startDate,
+                        endDate: endDate
+                    });
+                }, 500);
+            }
         }
 
         // Recurring Entry Functions
