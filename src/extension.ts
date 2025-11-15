@@ -2592,13 +2592,38 @@ function sendCalendarData(panel: vscode.WebviewPanel, startDate: string, endDate
         const project = projects.find(p => p.id === entry.project_id);
         const customer = customers.find(c => c.id === entry.customer_id);
 
+        // Determine color based on synergy submission status and billable status
+        let backgroundColor: string;
+        let borderColor: string;
+        let title = project?.name || 'Unknown Project';
+
+        if (entry.synergy_submitted) {
+            // Submitted to Synergy - Purple
+            backgroundColor = '#9c27b0';
+            borderColor = '#7b1fa2';
+            title = '✓ ' + title;
+        } else if (entry.synergy_synced) {
+            // Synced but not submitted - Orange
+            backgroundColor = '#ff9800';
+            borderColor = '#f57c00';
+            title = '⚠ ' + title;
+        } else if (entry.is_billable) {
+            // Billable but not synced - Green
+            backgroundColor = '#4caf50';
+            borderColor = '#388e3c';
+        } else {
+            // Non-billable - Blue
+            backgroundColor = '#2196f3';
+            borderColor = '#1976d2';
+        }
+
         return {
             id: entry.id,
-            title: project?.name || 'Unknown Project',
+            title: title,
             start: entry.start_time,
             end: entry.end_time,
-            backgroundColor: entry.is_billable ? '#4caf50' : '#2196f3',
-            borderColor: entry.is_billable ? '#4caf50' : '#2196f3',
+            backgroundColor: backgroundColor,
+            borderColor: borderColor,
             extendedProps: {
                 projectId: entry.project_id,
                 projectName: project?.name,
@@ -2607,7 +2632,12 @@ function sendCalendarData(panel: vscode.WebviewPanel, startDate: string, endDate
                 duration: entry.duration,
                 notes: entry.notes,
                 isBillable: entry.is_billable,
-                isManual: entry.is_manual
+                isManual: entry.is_manual,
+                synergySynced: entry.synergy_synced,
+                synergySubmitted: entry.synergy_submitted,
+                synergySyncDate: entry.synergy_sync_date,
+                synergySubmissionDate: entry.synergy_submission_date,
+                synergyId: entry.synergy_id
             }
         };
     });
@@ -3008,10 +3038,91 @@ function getCalendarHtml(): string {
         .fc-event {
             cursor: pointer;
         }
+
+        /* Legend styles */
+        .legend {
+            max-width: 1400px;
+            margin: 20px auto;
+            padding: 15px;
+            background-color: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-panel-border);
+            border-radius: 4px;
+        }
+
+        .legend-title {
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: var(--vscode-foreground);
+            font-size: 14px;
+        }
+
+        .legend-items {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--vscode-foreground);
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 3px;
+            border: 2px solid;
+        }
+
+        .legend-color.submitted {
+            background-color: #9c27b0;
+            border-color: #7b1fa2;
+        }
+
+        .legend-color.synced {
+            background-color: #ff9800;
+            border-color: #f57c00;
+        }
+
+        .legend-color.billable {
+            background-color: #4caf50;
+            border-color: #388e3c;
+        }
+
+        .legend-color.non-billable {
+            background-color: #2196f3;
+            border-color: #1976d2;
+        }
     </style>
 </head>
 <body>
     <div id="calendar"></div>
+
+    <!-- Legend -->
+    <div class="legend">
+        <div class="legend-title">Entry Status</div>
+        <div class="legend-items">
+            <div class="legend-item">
+                <div class="legend-color submitted"></div>
+                <span>✓ Submitted to Synergy</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color synced"></div>
+                <span>⚠ Synced (Not Submitted)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color billable"></div>
+                <span>Billable (Not Synced)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color non-billable"></div>
+                <span>Non-Billable</span>
+            </div>
+        </div>
+    </div>
 
     <!-- Entry Form Modal -->
     <div id="entryModal" class="modal">
@@ -3056,6 +3167,15 @@ function getCalendarHtml(): string {
                 <div class="form-group checkbox-group">
                     <input type="checkbox" id="isBillable">
                     <label for="isBillable">Billable</label>
+                </div>
+
+                <!-- Synergy Status Section (shown only for existing entries) -->
+                <div id="synergyStatusSection" class="form-group" style="display: none;">
+                    <label>Synergy Status</label>
+                    <div id="synergyStatusInfo" style="padding: 10px; background: var(--vscode-editor-background); border-radius: 3px; font-size: 12px;">
+                        <div id="synergySubmittedStatus"></div>
+                        <div id="synergySyncedStatus"></div>
+                    </div>
                 </div>
 
                 <div class="form-actions">
@@ -3167,6 +3287,36 @@ function getCalendarHtml(): string {
                 document.getElementById('isBillable').checked = event.extendedProps.isBillable;
                 document.getElementById('deleteBtn').style.display = 'inline-block';
                 document.getElementById('duplicateBtn').style.display = 'inline-block';
+
+                // Show synergy status if entry exists
+                const synergySection = document.getElementById('synergyStatusSection');
+                const submittedStatus = document.getElementById('synergySubmittedStatus');
+                const syncedStatus = document.getElementById('synergySyncedStatus');
+
+                if (event.extendedProps.synergySubmitted) {
+                    synergySection.style.display = 'block';
+                    submittedStatus.innerHTML = '<strong style="color: #9c27b0;">✓ Submitted to Synergy</strong>';
+                    if (event.extendedProps.synergySubmissionDate) {
+                        const subDate = new Date(event.extendedProps.synergySubmissionDate);
+                        submittedStatus.innerHTML += \` on \${subDate.toLocaleDateString()} at \${subDate.toLocaleTimeString()}\`;
+                    }
+                    syncedStatus.innerHTML = '';
+                } else if (event.extendedProps.synergySynced) {
+                    synergySection.style.display = 'block';
+                    submittedStatus.innerHTML = '';
+                    syncedStatus.innerHTML = '<strong style="color: #ff9800;">⚠ Synced but not submitted</strong>';
+                    if (event.extendedProps.synergySyncDate) {
+                        const syncDate = new Date(event.extendedProps.synergySyncDate);
+                        syncedStatus.innerHTML += \` on \${syncDate.toLocaleDateString()}\`;
+                    }
+                    if (event.extendedProps.synergyId) {
+                        syncedStatus.innerHTML += \`<br>Synergy ID: \${event.extendedProps.synergyId}\`;
+                    }
+                } else {
+                    synergySection.style.display = 'block';
+                    submittedStatus.innerHTML = '';
+                    syncedStatus.innerHTML = '<span style="color: var(--vscode-descriptionForeground);">Not synced to Synergy</span>';
+                }
             } else {
                 // Create mode
                 document.getElementById('entryId').value = '';
@@ -3177,6 +3327,7 @@ function getCalendarHtml(): string {
                 document.getElementById('endTime').value = formatDateTimeLocal(endDate);
                 document.getElementById('deleteBtn').style.display = 'none';
                 document.getElementById('duplicateBtn').style.display = 'none';
+                document.getElementById('synergyStatusSection').style.display = 'none';
             }
 
             modal.style.display = 'block';
