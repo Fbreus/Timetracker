@@ -3398,6 +3398,7 @@ function getCalendarHtml(): string {
                     <button type="button" class="secondary" onclick="closeModal()">Cancel</button>
                     <button type="button" class="danger" id="deleteBtn" style="display: none;" onclick="deleteEntry()">Delete</button>
                     <button type="button" id="duplicateBtn" style="display: none;" onclick="duplicateEntry()">Duplicate</button>
+                    <button type="button" id="saveTemplateBtn" style="display: none;" onclick="saveEntryAsTemplate()">💾 Save as Template</button>
                     <button type="submit">Save</button>
                 </div>
             </form>
@@ -3412,11 +3413,81 @@ function getCalendarHtml(): string {
                 <button class="close" onclick="closeTemplatesModal()">&times;</button>
             </div>
             <div style="margin-bottom: 20px;">
-                <button onclick="saveCurrentAsTemplate()" style="padding: 8px 16px;">💾 Save Current Entry as Template</button>
+                <button onclick="showCreateTemplateModal()" style="padding: 8px 16px;">➕ Create New Template</button>
             </div>
             <div id="templatesList" style="max-height: 400px; overflow-y: auto;">
                 <p style="color: var(--vscode-descriptionForeground); text-align: center; padding: 20px;">No templates saved yet.</p>
             </div>
+        </div>
+    </div>
+
+    <!-- Create Template Modal -->
+    <div id="createTemplateModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Create Template</h2>
+                <button class="close" onclick="closeCreateTemplateModal()">&times;</button>
+            </div>
+            <form id="createTemplateForm">
+                <div class="form-group">
+                    <label for="templateName">Template Name *</label>
+                    <input type="text" id="templateName" required placeholder="e.g., Daily Standup">
+                </div>
+
+                <div class="form-group">
+                    <label for="templateProject">Project *</label>
+                    <select id="templateProject" required>
+                        <option value="">Select a project...</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="templateCustomer">Customer</label>
+                    <select id="templateCustomer">
+                        <option value="">None</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="templateDuration">Duration (minutes) *</label>
+                    <input type="number" id="templateDuration" required min="1" value="60">
+                </div>
+
+                <div class="form-group">
+                    <label for="templateNotes">Notes</label>
+                    <textarea id="templateNotes" rows="3" placeholder="Template description or notes"></textarea>
+                </div>
+
+                <div class="form-group checkbox-group">
+                    <input type="checkbox" id="templateBillable">
+                    <label for="templateBillable">Billable</label>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="secondary" onclick="closeCreateTemplateModal()">Cancel</button>
+                    <button type="submit">Create Template</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Apply Template Modal -->
+    <div id="applyTemplateModal" class="modal">
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h2>Apply Template</h2>
+                <button class="close" onclick="closeApplyTemplateModal()">&times;</button>
+            </div>
+            <form id="applyTemplateForm">
+                <div class="form-group">
+                    <label for="applyTemplateDate">Date *</label>
+                    <input type="date" id="applyTemplateDate" required>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="secondary" onclick="closeApplyTemplateModal()">Cancel</button>
+                    <button type="submit">Add Entry</button>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -3524,6 +3595,7 @@ function getCalendarHtml(): string {
         let selectedEvent = null;
         let templates = [];
         let duplicateEntryId = null;
+        let applyTemplateIndex = null;
 
         document.addEventListener('DOMContentLoaded', function() {
             const calendarEl = document.getElementById('calendar');
@@ -3660,6 +3732,76 @@ function getCalendarHtml(): string {
                     }, 500);
                 }
             });
+
+            // Set up create template form submission
+            document.getElementById('createTemplateForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                const name = document.getElementById('templateName').value;
+                const projectId = parseInt(document.getElementById('templateProject').value);
+                const customerId = document.getElementById('templateCustomer').value ? parseInt(document.getElementById('templateCustomer').value) : null;
+                const duration = parseInt(document.getElementById('templateDuration').value);
+                const notes = document.getElementById('templateNotes').value;
+                const isBillable = document.getElementById('templateBillable').checked;
+
+                // Find project name
+                const project = projects.find(p => p.id === projectId);
+                const projectName = project ? project.name : 'Unknown';
+
+                const template = {
+                    name: name,
+                    projectId: projectId,
+                    projectName: projectName,
+                    customerId: customerId,
+                    duration: duration,
+                    notes: notes,
+                    isBillable: isBillable
+                };
+
+                templates.push(template);
+                saveTemplates();
+                renderTemplates();
+                closeCreateTemplateModal();
+            });
+
+            // Set up apply template form submission
+            document.getElementById('applyTemplateForm').addEventListener('submit', function(e) {
+                e.preventDefault();
+                const dateStr = document.getElementById('applyTemplateDate').value;
+
+                if (applyTemplateIndex !== null && dateStr) {
+                    const template = templates[applyTemplateIndex];
+                    const startDate = new Date(dateStr + 'T09:00');
+                    const endDate = new Date(startDate.getTime() + template.duration * 60000);
+
+                    vscode.postMessage({
+                        command: 'createEntry',
+                        entry: {
+                            projectId: template.projectId,
+                            customerId: template.customerId,
+                            start: startDate.toISOString(),
+                            end: endDate.toISOString(),
+                            duration: template.duration * 60,
+                            notes: template.notes,
+                            isBillable: template.isBillable
+                        }
+                    });
+
+                    closeApplyTemplateModal();
+
+                    // Refresh calendar
+                    setTimeout(() => {
+                        const dateObj = new Date(dateStr);
+                        const viewStart = new Date(dateObj.getFullYear(), dateObj.getMonth(), 1).toISOString();
+                        const viewEnd = new Date(dateObj.getFullYear(), dateObj.getMonth() + 2, 0).toISOString();
+                        vscode.postMessage({
+                            command: 'getEntries',
+                            startDate: viewStart,
+                            endDate: viewEnd
+                        });
+                    }, 500);
+                }
+            });
         });
 
         function handleDatesSet(info) {
@@ -3727,6 +3869,7 @@ function getCalendarHtml(): string {
                 document.getElementById('isBillable').checked = event.extendedProps.isBillable;
                 document.getElementById('deleteBtn').style.display = 'inline-block';
                 document.getElementById('duplicateBtn').style.display = 'inline-block';
+                document.getElementById('saveTemplateBtn').style.display = 'inline-block';
 
                 // Check if entry is synced (read-only mode)
                 const isSynced = event.extendedProps.synergySynced || event.extendedProps.synergySubmitted;
@@ -3788,6 +3931,7 @@ function getCalendarHtml(): string {
                 document.getElementById('endTime').value = formatDateTimeLocal(endDate);
                 document.getElementById('deleteBtn').style.display = 'none';
                 document.getElementById('duplicateBtn').style.display = 'none';
+                document.getElementById('saveTemplateBtn').style.display = 'none';
                 document.getElementById('synergyStatusSection').style.display = 'none';
 
                 // Enable all fields for new entry
@@ -4128,15 +4272,11 @@ function getCalendarHtml(): string {
             document.getElementById('templatesModal').style.display = 'none';
         }
 
-        function saveCurrentAsTemplate() {
-            if (!selectedEvent) {
-                const name = prompt('Enter template name:');
-                if (!name) return;
+        // Save current entry as template (called from entry modal)
+        function saveEntryAsTemplate() {
+            if (!selectedEvent) return;
 
-                return;
-            }
-
-            const name = prompt('Enter template name:', 'My Template');
+            const name = window.prompt('Enter template name:', 'My Template');
             if (!name) return;
 
             const start = new Date(selectedEvent.start);
@@ -4158,28 +4298,50 @@ function getCalendarHtml(): string {
             renderTemplates();
         }
 
-        function applyTemplate(index) {
-            const template = templates[index];
-            const dateStr = prompt('Enter date to add this entry (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
-            if (!dateStr) return;
-
-            const startDate = new Date(dateStr + 'T09:00');
-            const endDate = new Date(startDate.getTime() + template.duration * 60000);
-
-            vscode.postMessage({
-                command: 'createEntry',
-                entry: {
-                    projectId: template.projectId,
-                    customerId: template.customerId,
-                    start: startDate.toISOString(),
-                    end: endDate.toISOString(),
-                    duration: template.duration * 60,
-                    notes: template.notes,
-                    isBillable: template.isBillable
-                }
+        // Create new template from scratch
+        function showCreateTemplateModal() {
+            // Populate project dropdown
+            const templateProject = document.getElementById('templateProject');
+            templateProject.innerHTML = '<option value="">Select a project...</option>';
+            projects.forEach(project => {
+                const option = document.createElement('option');
+                option.value = project.id;
+                option.textContent = project.name;
+                templateProject.appendChild(option);
             });
 
-            closeTemplatesModal();
+            // Populate customer dropdown
+            const templateCustomer = document.getElementById('templateCustomer');
+            templateCustomer.innerHTML = '<option value="">None</option>';
+            customers.forEach(customer => {
+                const option = document.createElement('option');
+                option.value = customer.id;
+                option.textContent = customer.name;
+                templateCustomer.appendChild(option);
+            });
+
+            document.getElementById('createTemplateForm').reset();
+            document.getElementById('createTemplateModal').style.display = 'block';
+        }
+
+        function closeCreateTemplateModal() {
+            document.getElementById('createTemplateModal').style.display = 'none';
+        }
+
+        function applyTemplate(index) {
+            applyTemplateIndex = index;
+
+            // Set default date to today
+            const today = new Date();
+            document.getElementById('applyTemplateDate').value = today.toISOString().split('T')[0];
+
+            // Show apply template modal
+            document.getElementById('applyTemplateModal').style.display = 'block';
+        }
+
+        function closeApplyTemplateModal() {
+            document.getElementById('applyTemplateModal').style.display = 'none';
+            applyTemplateIndex = null;
         }
 
         function deleteTemplate(index) {
