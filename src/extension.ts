@@ -1532,7 +1532,19 @@ function getTimeEntriesHtml(): string {
                 const option = document.createElement('option');
                 option.value = project.projectNr;
                 option.textContent = \`\${project.projectNr} - \${project.name}\`;
+                // Store customer name in data attribute for auto-fill
+                option.dataset.customerName = project.customerName || '';
                 projectSelect.appendChild(option);
+            });
+
+            // Add event listener to auto-fill customer field when project is selected
+            projectSelect.addEventListener('change', function() {
+                const selectedOption = this.options[this.selectedIndex];
+                const customerName = selectedOption.dataset.customerName || '';
+                const clientField = document.getElementById('synergyClient');
+                if (clientField && customerName) {
+                    clientField.value = customerName;
+                }
             });
         }
 
@@ -1607,6 +1619,8 @@ function getTimeEntriesHtml(): string {
             scoredProjects.forEach((project, index) => {
                 const option = document.createElement('option');
                 option.value = project.projectNr;
+                // Store customer name in data attribute for auto-fill
+                option.dataset.customerName = project.customerName || '';
 
                 // Add visual separator after matched projects
                 if (index === 0 && project.score > 0) {
@@ -1625,6 +1639,16 @@ function getTimeEntriesHtml(): string {
                 }
 
                 projectSelect.appendChild(option);
+            });
+
+            // Add event listener to auto-fill customer field when project is selected
+            projectSelect.addEventListener('change', function() {
+                const selectedOption = this.options[this.selectedIndex];
+                const customerName = selectedOption.dataset.customerName || '';
+                const clientField = document.getElementById('synergyClient');
+                if (clientField && customerName) {
+                    clientField.value = customerName;
+                }
             });
         }
 
