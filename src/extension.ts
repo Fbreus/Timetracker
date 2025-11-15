@@ -2587,65 +2587,112 @@ function sendCalendarData(panel: vscode.WebviewPanel, startDate: string, endDate
     const projects = db.getAllProjects();
     const customers = db.getAllCustomers();
 
-    // Transform entries into calendar events
-    const events = entries.map(entry => {
-        const project = projects.find(p => p.id === entry.project_id);
-        const customer = customers.find(c => c.id === entry.customer_id);
+    // Group entries by project_id and date
+    const groupedEntries = new Map<string, typeof entries>();
 
-        // Determine color based on synergy submission status and billable status
+    entries.forEach(entry => {
+        const entryDate = new Date(entry.start_time).toISOString().split('T')[0];
+        const groupKey = `${entry.project_id}_${entryDate}`;
+
+        if (!groupedEntries.has(groupKey)) {
+            groupedEntries.set(groupKey, []);
+        }
+        groupedEntries.get(groupKey)!.push(entry);
+    });
+
+    // Transform grouped entries into calendar events
+    const events: any[] = [];
+
+    groupedEntries.forEach((groupEntries, groupKey) => {
+        const firstEntry = groupEntries[0];
+        const project = projects.find(p => p.id === firstEntry.project_id);
+        const customer = customers.find(c => c.id === firstEntry.customer_id);
+
+        // Calculate total duration and check status
+        const totalDuration = groupEntries.reduce((sum, e) => sum + (e.duration || 0), 0);
+        const totalHours = (totalDuration / 3600).toFixed(2);
+
+        // Check if any entry in group is synced or submitted
+        const hasSubmitted = groupEntries.some(e => e.synergy_submitted);
+        const hasSynced = groupEntries.some(e => e.synergy_synced);
+        const allBillable = groupEntries.every(e => e.is_billable);
+
+        // Determine color based on group status
         let backgroundColor: string;
         let borderColor: string;
         let title = project?.name || 'Unknown Project';
+        title += ` (${totalHours}h)`;
 
-        if (entry.synergy_submitted) {
-            // Submitted to Synergy - Purple
+        if (hasSubmitted) {
             backgroundColor = '#9c27b0';
             borderColor = '#7b1fa2';
             title = '✓ ' + title;
-        } else if (entry.synergy_synced) {
-            // Synced but not submitted - Orange
+        } else if (hasSynced) {
             backgroundColor = '#ff9800';
             borderColor = '#f57c00';
             title = '⚠ ' + title;
-        } else if (entry.is_billable) {
-            // Billable but not synced - Green
+        } else if (allBillable) {
             backgroundColor = '#4caf50';
             borderColor = '#388e3c';
         } else {
-            // Non-billable - Blue
             backgroundColor = '#2196f3';
             borderColor = '#1976d2';
         }
 
-        // Synced or submitted entries cannot be edited
-        const isEditable = !entry.synergy_synced && !entry.synergy_submitted;
+        // Group is editable only if no entries are synced/submitted
+        const isEditable = !hasSynced && !hasSubmitted;
 
-        return {
-            id: entry.id,
+        // Find earliest start and latest end for display
+        const earliestStart = groupEntries.reduce((min, e) =>
+            e.start_time < min ? e.start_time : min,
+            groupEntries[0].start_time
+        );
+        const latestEnd = groupEntries.reduce((max, e) =>
+            e.end_time && e.end_time > max ? e.end_time : max,
+            groupEntries[0].end_time || groupEntries[0].start_time
+        );
+
+        // Use the date with a single time block (not all-day)
+        const entryDate = earliestStart.split('T')[0];
+        const startTime = `${entryDate}T09:00:00`;
+        const endTime = `${entryDate}T${(9 + parseFloat(totalHours)).toString().padStart(2, '0')}:00:00`;
+
+        events.push({
+            id: `group_${groupKey}`,
             title: title,
-            start: entry.start_time,
-            end: entry.end_time,
+            start: startTime,
+            end: endTime,
             backgroundColor: backgroundColor,
             borderColor: borderColor,
-            editable: isEditable,
-            startEditable: isEditable,
-            durationEditable: isEditable,
+            editable: false, // Groups are not draggable
+            startEditable: false,
+            durationEditable: false,
             extendedProps: {
-                projectId: entry.project_id,
+                isGroup: true,
+                groupKey: groupKey,
+                entryIds: groupEntries.map(e => e.id),
+                entryCount: groupEntries.length,
+                projectId: firstEntry.project_id,
                 projectName: project?.name,
-                customerId: entry.customer_id,
+                customerId: firstEntry.customer_id,
                 customerName: customer?.account_name,
-                duration: entry.duration,
-                notes: entry.notes,
-                isBillable: entry.is_billable,
-                isManual: entry.is_manual,
-                synergySynced: entry.synergy_synced,
-                synergySubmitted: entry.synergy_submitted,
-                synergySyncDate: entry.synergy_sync_date,
-                synergySubmissionDate: entry.synergy_submission_date,
-                synergyId: entry.synergy_id
+                duration: totalDuration,
+                totalHours: totalHours,
+                isBillable: allBillable,
+                synergySynced: hasSynced,
+                synergySubmitted: hasSubmitted,
+                entries: groupEntries.map(e => ({
+                    id: e.id,
+                    start: e.start_time,
+                    end: e.end_time,
+                    duration: e.duration,
+                    notes: e.notes,
+                    isBillable: e.is_billable,
+                    synergySynced: e.synergy_synced,
+                    synergySubmitted: e.synergy_submitted
+                }))
             }
-        };
+        });
     });
 
     panel.webview.postMessage({
@@ -3586,6 +3633,33 @@ function getCalendarHtml(): string {
         </div>
     </div>
 
+    <!-- Grouped Entries Modal -->
+    <div id="groupedEntriesModal" class="modal">
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="modal-header">
+                <h2 id="groupedEntriesTitle">Grouped Entries</h2>
+                <button class="close" onclick="closeGroupedEntriesModal()">&times;</button>
+            </div>
+            <div style="margin-bottom: 15px; padding: 12px; background: var(--vscode-editor-background); border-radius: 4px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-weight: 600;" id="groupedProjectName"></div>
+                        <div style="font-size: 11px; color: var(--vscode-descriptionForeground);" id="groupedProjectInfo"></div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div style="font-size: 20px; font-weight: 600; color: var(--vscode-charts-blue);" id="groupedTotalHours"></div>
+                        <div style="font-size: 11px; color: var(--vscode-descriptionForeground);">Total Hours</div>
+                    </div>
+                </div>
+            </div>
+            <div id="groupedEntriesList" style="max-height: 400px; overflow-y: auto; margin-bottom: 15px;">
+            </div>
+            <div class="form-actions">
+                <button type="button" class="secondary" onclick="closeGroupedEntriesModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const vscode = acquireVsCodeApi();
         let calendar;
@@ -3820,7 +3894,13 @@ function getCalendarHtml(): string {
 
         function handleEventClick(info) {
             selectedEvent = info.event;
-            openModal('Edit Time Entry', null, info.event);
+
+            // Check if this is a grouped entry
+            if (info.event.extendedProps.isGroup) {
+                showGroupedEntriesModal(info.event);
+            } else {
+                openModal('Edit Time Entry', null, info.event);
+            }
         }
 
         function handleEventDrop(info) {
@@ -4028,6 +4108,58 @@ function getCalendarHtml(): string {
         function closeDuplicateModal() {
             document.getElementById('duplicateModal').style.display = 'none';
             duplicateEntryId = null;
+        }
+
+        function showGroupedEntriesModal(event) {
+            const entries = event.extendedProps.entries || [];
+            const projectName = event.extendedProps.projectName || 'Unknown Project';
+            const totalHours = event.extendedProps.totalHours || '0.00';
+            const entryCount = event.extendedProps.entryCount || 0;
+
+            // Set header info
+            document.getElementById('groupedEntriesTitle').textContent = projectName + ' - Grouped Entries';
+            document.getElementById('groupedProjectName').textContent = projectName;
+            document.getElementById('groupedProjectInfo').textContent = entryCount + ' ' + (entryCount === 1 ? 'entry' : 'entries') + ' on ' + new Date(event.start).toLocaleDateString();
+            document.getElementById('groupedTotalHours').textContent = totalHours + 'h';
+
+            // Build entries list
+            const list = document.getElementById('groupedEntriesList');
+            list.innerHTML = entries.map((entry, index) => {
+                const start = new Date(entry.start);
+                const end = entry.end ? new Date(entry.end) : null;
+                const durationHours = entry.duration ? (entry.duration / 3600).toFixed(2) : '0.00';
+                const startTime = start.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+                const endTime = end ? end.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}) : 'N/A';
+
+                let statusBadge = '';
+                if (entry.synergySubmitted) {
+                    statusBadge = '<span style="padding: 2px 8px; background: #9c27b0; color: white; border-radius: 3px; font-size: 10px; margin-left: 8px;">✓ SUBMITTED</span>';
+                } else if (entry.synergySynced) {
+                    statusBadge = '<span style="padding: 2px 8px; background: #ff9800; color: white; border-radius: 3px; font-size: 10px; margin-left: 8px;">⚠ SYNCED</span>';
+                }
+
+                return \`
+                    <div style="padding: 12px; margin-bottom: 8px; background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); border-radius: 4px;">
+                        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 6px;">
+                            <div style="font-weight: 600;">Entry #\${index + 1} - \${durationHours}h</div>
+                            <div style="font-size: 11px; color: var(--vscode-descriptionForeground);">
+                                \${startTime} - \${endTime}\${statusBadge}
+                            </div>
+                        </div>
+                        \${entry.notes ? \`<div style="font-size: 11px; color: var(--vscode-descriptionForeground); padding: 6px; background: var(--vscode-input-background); border-radius: 3px;">📝 \${entry.notes}</div>\` : ''}
+                        <div style="margin-top: 8px; font-size: 11px;">
+                            <span style="color: var(--vscode-descriptionForeground);">Billable: </span>
+                            <span style="color: \${entry.isBillable ? 'var(--vscode-charts-green)' : 'var(--vscode-charts-red)'};">\${entry.isBillable ? 'Yes' : 'No'}</span>
+                        </div>
+                    </div>
+                \`;
+            }).join('');
+
+            document.getElementById('groupedEntriesModal').style.display = 'block';
+        }
+
+        function closeGroupedEntriesModal() {
+            document.getElementById('groupedEntriesModal').style.display = 'none';
         }
 
         function formatDateTimeLocal(date) {
