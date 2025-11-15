@@ -449,6 +449,23 @@ export class TimeTrackerDatabase {
         return this.rowToTimeEntry(result[0].columns, result[0].values[0]);
     }
 
+    getTimeEntryById(id: number): TimeEntry | undefined {
+        if (!this.db) {
+            throw new Error('Database not initialized');
+        }
+
+        const result = this.db.exec(
+            'SELECT * FROM time_entries WHERE id = ?',
+            [id]
+        );
+
+        if (result.length === 0 || result[0].values.length === 0) {
+            return undefined;
+        }
+
+        return this.rowToTimeEntry(result[0].columns, result[0].values[0]);
+    }
+
     getTimeEntriesForProject(projectId: number, startDate?: string, endDate?: string): TimeEntry[] {
         if (!this.db) {
             throw new Error('Database not initialized');

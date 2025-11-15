@@ -173,6 +173,12 @@ async function initializeExtension(context: vscode.ExtensionContext) {
         );
 
         context.subscriptions.push(
+            vscode.commands.registerCommand('timetracker.showCalendar', async () => {
+                await showCalendar(context);
+            })
+        );
+
+        context.subscriptions.push(
             vscode.commands.registerCommand('timetracker.addManualEntry', async () => {
                 await addManualEntry();
             })
@@ -2521,6 +2527,799 @@ function handlePomodoroPhaseComplete(phase: PomodoroPhase): void {
             timeTracker.resumeTracking();
         }
     }
+}
+
+async function showCalendar(context: vscode.ExtensionContext): Promise<void> {
+    // Create and show calendar webview panel
+    const panel = vscode.window.createWebviewPanel(
+        'timetrackerCalendar',
+        'Time Tracker Calendar',
+        vscode.ViewColumn.One,
+        {
+            enableScripts: true,
+            localResourceRoots: [context.extensionUri],
+            retainContextWhenHidden: true
+        }
+    );
+
+    panel.webview.html = getCalendarHtml();
+
+    // Handle messages from the webview
+    panel.webview.onDidReceiveMessage(
+        async message => {
+            switch (message.command) {
+                case 'getEntries':
+                    sendCalendarData(panel, message.startDate, message.endDate);
+                    break;
+                case 'createEntry':
+                    await createTimeEntry(panel, message.entry);
+                    break;
+                case 'updateEntry':
+                    await updateTimeEntry(panel, message.id, message.updates);
+                    break;
+                case 'deleteEntry':
+                    await deleteCalendarTimeEntry(panel, message.id);
+                    break;
+                case 'duplicateEntry':
+                    await duplicateTimeEntry(panel, message.id, message.newDate);
+                    break;
+                case 'getProjects':
+                    sendProjectsList(panel);
+                    break;
+                case 'getCustomers':
+                    sendCustomersList(panel);
+                    break;
+            }
+        }
+    );
+
+    // Send initial data
+    const today = new Date();
+    const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
+    const endDate = new Date(today.getFullYear(), today.getMonth() + 1, 0).toISOString();
+    sendCalendarData(panel, startDate, endDate);
+    sendProjectsList(panel);
+    sendCustomersList(panel);
+}
+
+function sendCalendarData(panel: vscode.WebviewPanel, startDate: string, endDate: string): void {
+    const entries = db.getTimeEntriesForDateRange(startDate, endDate);
+    const projects = db.getAllProjects();
+    const customers = db.getAllCustomers();
+
+    // Transform entries into calendar events
+    const events = entries.map(entry => {
+        const project = projects.find(p => p.id === entry.project_id);
+        const customer = customers.find(c => c.id === entry.customer_id);
+
+        return {
+            id: entry.id,
+            title: project?.name || 'Unknown Project',
+            start: entry.start_time,
+            end: entry.end_time,
+            backgroundColor: entry.is_billable ? '#4caf50' : '#2196f3',
+            borderColor: entry.is_billable ? '#4caf50' : '#2196f3',
+            extendedProps: {
+                projectId: entry.project_id,
+                projectName: project?.name,
+                customerId: entry.customer_id,
+                customerName: customer?.account_name,
+                duration: entry.duration,
+                notes: entry.notes,
+                isBillable: entry.is_billable,
+                isManual: entry.is_manual
+            }
+        };
+    });
+
+    panel.webview.postMessage({
+        command: 'updateEvents',
+        events
+    });
+}
+
+function sendProjectsList(panel: vscode.WebviewPanel): void {
+    const projects = db.getAllProjects();
+    panel.webview.postMessage({
+        command: 'updateProjects',
+        projects
+    });
+}
+
+function sendCustomersList(panel: vscode.WebviewPanel): void {
+    const customers = db.getAllCustomers();
+    panel.webview.postMessage({
+        command: 'updateCustomers',
+        customers
+    });
+}
+
+async function createTimeEntry(panel: vscode.WebviewPanel, entry: any): Promise<void> {
+    try {
+        const timeEntry = {
+            project_id: entry.projectId,
+            customer_id: entry.customerId || undefined,
+            start_time: entry.start,
+            end_time: entry.end,
+            duration: entry.duration,
+            is_manual: true,
+            notes: entry.notes || '',
+            is_billable: entry.isBillable || false,
+            synergy_synced: false
+        };
+
+        const id = db.createTimeEntry(timeEntry);
+
+        panel.webview.postMessage({
+            command: 'entryCreated',
+            success: true,
+            id
+        });
+
+        // Refresh calendar data
+        const startDate = new Date(entry.start);
+        startDate.setDate(1);
+        const endDate = new Date(startDate);
+        endDate.setMonth(endDate.getMonth() + 1);
+        sendCalendarData(panel, startDate.toISOString(), endDate.toISOString());
+
+        vscode.window.showInformationMessage('Time entry created successfully');
+    } catch (error) {
+        panel.webview.postMessage({
+            command: 'entryCreated',
+            success: false,
+            error: String(error)
+        });
+        vscode.window.showErrorMessage(`Failed to create time entry: ${error}`);
+    }
+}
+
+async function updateTimeEntry(panel: vscode.WebviewPanel, id: number, updates: any): Promise<void> {
+    try {
+        const dbUpdates: any = {};
+
+        if (updates.projectId !== undefined) { dbUpdates.project_id = updates.projectId; }
+        if (updates.customerId !== undefined) { dbUpdates.customer_id = updates.customerId; }
+        if (updates.start !== undefined) { dbUpdates.start_time = updates.start; }
+        if (updates.end !== undefined) { dbUpdates.end_time = updates.end; }
+        if (updates.duration !== undefined) { dbUpdates.duration = updates.duration; }
+        if (updates.notes !== undefined) { dbUpdates.notes = updates.notes; }
+        if (updates.isBillable !== undefined) { dbUpdates.is_billable = updates.isBillable; }
+
+        db.updateTimeEntry(id, dbUpdates);
+
+        panel.webview.postMessage({
+            command: 'entryUpdated',
+            success: true,
+            id
+        });
+
+        // Refresh calendar data
+        const entry = db.getTimeEntryById(id);
+        if (entry) {
+            const startDate = new Date(entry.start_time);
+            startDate.setDate(1);
+            const endDate = new Date(startDate);
+            endDate.setMonth(endDate.getMonth() + 1);
+            sendCalendarData(panel, startDate.toISOString(), endDate.toISOString());
+        }
+
+        vscode.window.showInformationMessage('Time entry updated successfully');
+    } catch (error) {
+        panel.webview.postMessage({
+            command: 'entryUpdated',
+            success: false,
+            error: String(error)
+        });
+        vscode.window.showErrorMessage(`Failed to update time entry: ${error}`);
+    }
+}
+
+async function deleteCalendarTimeEntry(panel: vscode.WebviewPanel, id: number): Promise<void> {
+    try {
+        const entry = db.getTimeEntryById(id);
+        db.deleteTimeEntry(id);
+
+        panel.webview.postMessage({
+            command: 'entryDeleted',
+            success: true,
+            id
+        });
+
+        // Refresh calendar data
+        if (entry) {
+            const startDate = new Date(entry.start_time);
+            startDate.setDate(1);
+            const endDate = new Date(startDate);
+            endDate.setMonth(endDate.getMonth() + 1);
+            sendCalendarData(panel, startDate.toISOString(), endDate.toISOString());
+        }
+
+        vscode.window.showInformationMessage('Time entry deleted successfully');
+    } catch (error) {
+        panel.webview.postMessage({
+            command: 'entryDeleted',
+            success: false,
+            error: String(error)
+        });
+        vscode.window.showErrorMessage(`Failed to delete time entry: ${error}`);
+    }
+}
+
+async function duplicateTimeEntry(panel: vscode.WebviewPanel, id: number, newDate: string): Promise<void> {
+    try {
+        const original = db.getTimeEntryById(id);
+        if (!original) {
+            throw new Error('Original entry not found');
+        }
+
+        // Calculate new times based on new date
+        const originalStart = new Date(original.start_time);
+        const newStart = new Date(newDate);
+        newStart.setHours(originalStart.getHours(), originalStart.getMinutes(), originalStart.getSeconds());
+
+        let newEnd: string | undefined;
+        if (original.end_time) {
+            const originalEnd = new Date(original.end_time);
+            const newEndDate = new Date(newDate);
+            newEndDate.setHours(originalEnd.getHours(), originalEnd.getMinutes(), originalEnd.getSeconds());
+            newEnd = newEndDate.toISOString();
+        }
+
+        const duplicatedEntry = {
+            project_id: original.project_id,
+            customer_id: original.customer_id,
+            start_time: newStart.toISOString(),
+            end_time: newEnd,
+            duration: original.duration,
+            is_manual: true,
+            notes: original.notes ? `${original.notes} (duplicated)` : 'Duplicated entry',
+            is_billable: original.is_billable,
+            synergy_synced: false
+        };
+
+        const newId = db.createTimeEntry(duplicatedEntry);
+
+        panel.webview.postMessage({
+            command: 'entryDuplicated',
+            success: true,
+            id: newId
+        });
+
+        // Refresh calendar data
+        const startDate = new Date(newStart);
+        startDate.setDate(1);
+        const endDate = new Date(startDate);
+        endDate.setMonth(endDate.getMonth() + 1);
+        sendCalendarData(panel, startDate.toISOString(), endDate.toISOString());
+
+        vscode.window.showInformationMessage('Time entry duplicated successfully');
+    } catch (error) {
+        panel.webview.postMessage({
+            command: 'entryDuplicated',
+            success: false,
+            error: String(error)
+        });
+        vscode.window.showErrorMessage(`Failed to duplicate time entry: ${error}`);
+    }
+}
+
+function getCalendarHtml(): string {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Time Tracker Calendar</title>
+    <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.css" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js"></script>
+    <style>
+        :root {
+            --fc-border-color: var(--vscode-panel-border);
+            --fc-button-bg-color: var(--vscode-button-background);
+            --fc-button-border-color: var(--vscode-button-background);
+            --fc-button-hover-bg-color: var(--vscode-button-hoverBackground);
+            --fc-button-hover-border-color: var(--vscode-button-hoverBackground);
+            --fc-button-active-bg-color: var(--vscode-button-hoverBackground);
+            --fc-button-active-border-color: var(--vscode-button-hoverBackground);
+            --fc-event-bg-color: var(--vscode-button-background);
+            --fc-event-border-color: var(--vscode-button-background);
+            --fc-today-bg-color: var(--vscode-editor-selectionBackground);
+        }
+
+        body {
+            padding: 20px;
+            color: var(--vscode-foreground);
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            background-color: var(--vscode-editor-background);
+            margin: 0;
+        }
+
+        #calendar {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .fc {
+            color: var(--vscode-foreground);
+        }
+
+        .fc-toolbar-title {
+            color: var(--vscode-foreground);
+        }
+
+        .fc-col-header-cell {
+            background-color: var(--vscode-editor-background);
+            color: var(--vscode-foreground);
+        }
+
+        .fc-daygrid-day-number {
+            color: var(--vscode-foreground);
+        }
+
+        .fc-button {
+            color: var(--vscode-button-foreground) !important;
+            background-color: var(--vscode-button-background) !important;
+            border-color: var(--vscode-button-background) !important;
+        }
+
+        .fc-button:hover {
+            background-color: var(--vscode-button-hoverBackground) !important;
+            border-color: var(--vscode-button-hoverBackground) !important;
+        }
+
+        .fc-button-active {
+            background-color: var(--vscode-button-hoverBackground) !important;
+        }
+
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-content {
+            background-color: var(--vscode-editor-background);
+            margin: 5% auto;
+            padding: 20px;
+            border: 1px solid var(--vscode-panel-border);
+            width: 80%;
+            max-width: 600px;
+            border-radius: 4px;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--vscode-panel-border);
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            color: var(--vscode-foreground);
+        }
+
+        .close {
+            color: var(--vscode-foreground);
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            background: none;
+            border: none;
+        }
+
+        .close:hover {
+            color: var(--vscode-errorForeground);
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: var(--vscode-foreground);
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 8px;
+            background-color: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 2px;
+            box-sizing: border-box;
+        }
+
+        .form-group textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: 1px solid var(--vscode-focusBorder);
+        }
+
+        .form-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        button {
+            padding: 8px 16px;
+            background-color: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 2px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: var(--vscode-button-hoverBackground);
+        }
+
+        button.secondary {
+            background-color: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+        }
+
+        button.secondary:hover {
+            background-color: var(--vscode-button-secondaryHoverBackground);
+        }
+
+        button.danger {
+            background-color: var(--vscode-errorBackground);
+            color: var(--vscode-errorForeground);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .checkbox-group input[type="checkbox"] {
+            width: auto;
+        }
+
+        .time-inputs {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        .fc-event {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="calendar"></div>
+
+    <!-- Entry Form Modal -->
+    <div id="entryModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modalTitle">Create Time Entry</h2>
+                <button class="close" onclick="closeModal()">&times;</button>
+            </div>
+            <form id="entryForm">
+                <input type="hidden" id="entryId">
+
+                <div class="form-group">
+                    <label for="projectSelect">Project *</label>
+                    <select id="projectSelect" required>
+                        <option value="">Select a project...</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="customerSelect">Customer</label>
+                    <select id="customerSelect">
+                        <option value="">None</option>
+                    </select>
+                </div>
+
+                <div class="form-group time-inputs">
+                    <div>
+                        <label for="startTime">Start Time *</label>
+                        <input type="datetime-local" id="startTime" required>
+                    </div>
+                    <div>
+                        <label for="endTime">End Time *</label>
+                        <input type="datetime-local" id="endTime" required>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="notes">Notes</label>
+                    <textarea id="notes"></textarea>
+                </div>
+
+                <div class="form-group checkbox-group">
+                    <input type="checkbox" id="isBillable">
+                    <label for="isBillable">Billable</label>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="secondary" onclick="closeModal()">Cancel</button>
+                    <button type="button" class="danger" id="deleteBtn" style="display: none;" onclick="deleteEntry()">Delete</button>
+                    <button type="button" id="duplicateBtn" style="display: none;" onclick="duplicateEntry()">Duplicate</button>
+                    <button type="submit">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const vscode = acquireVsCodeApi();
+        let calendar;
+        let currentEvents = [];
+        let projects = [];
+        let customers = [];
+        let selectedEvent = null;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            const calendarEl = document.getElementById('calendar');
+            calendar = new FullCalendar.Calendar(calendarEl, {
+                initialView: 'dayGridMonth',
+                headerToolbar: {
+                    left: 'prev,next today',
+                    center: 'title',
+                    right: 'dayGridMonth,timeGridWeek,timeGridDay'
+                },
+                editable: true,
+                droppable: true,
+                eventDurationEditable: true,
+                eventStartEditable: true,
+                dateClick: handleDateClick,
+                eventClick: handleEventClick,
+                eventDrop: handleEventDrop,
+                eventResize: handleEventResize,
+                datesSet: handleDatesSet,
+                height: 'auto'
+            });
+            calendar.render();
+
+            // Set up form submission
+            document.getElementById('entryForm').addEventListener('submit', handleFormSubmit);
+        });
+
+        function handleDatesSet(info) {
+            // Request data for the visible date range
+            vscode.postMessage({
+                command: 'getEntries',
+                startDate: info.start.toISOString(),
+                endDate: info.end.toISOString()
+            });
+        }
+
+        function handleDateClick(info) {
+            selectedEvent = null;
+            openModal('Create Time Entry', info.dateStr);
+        }
+
+        function handleEventClick(info) {
+            selectedEvent = info.event;
+            openModal('Edit Time Entry', null, info.event);
+        }
+
+        function handleEventDrop(info) {
+            const event = info.event;
+            const updates = {
+                start: event.start.toISOString(),
+                end: event.end ? event.end.toISOString() : null,
+                duration: event.end ? Math.floor((event.end - event.start) / 1000) : null
+            };
+
+            vscode.postMessage({
+                command: 'updateEntry',
+                id: parseInt(event.id),
+                updates: updates
+            });
+        }
+
+        function handleEventResize(info) {
+            const event = info.event;
+            const updates = {
+                end: event.end ? event.end.toISOString() : null,
+                duration: event.end ? Math.floor((event.end - event.start) / 1000) : null
+            };
+
+            vscode.postMessage({
+                command: 'updateEntry',
+                id: parseInt(event.id),
+                updates: updates
+            });
+        }
+
+        function openModal(title, dateStr, event) {
+            document.getElementById('modalTitle').textContent = title;
+            const modal = document.getElementById('entryModal');
+            const form = document.getElementById('entryForm');
+            form.reset();
+
+            if (event) {
+                // Edit mode
+                document.getElementById('entryId').value = event.id;
+                document.getElementById('projectSelect').value = event.extendedProps.projectId;
+                document.getElementById('customerSelect').value = event.extendedProps.customerId || '';
+                document.getElementById('startTime').value = formatDateTimeLocal(event.start);
+                document.getElementById('endTime').value = event.end ? formatDateTimeLocal(event.end) : '';
+                document.getElementById('notes').value = event.extendedProps.notes || '';
+                document.getElementById('isBillable').checked = event.extendedProps.isBillable;
+                document.getElementById('deleteBtn').style.display = 'inline-block';
+                document.getElementById('duplicateBtn').style.display = 'inline-block';
+            } else {
+                // Create mode
+                document.getElementById('entryId').value = '';
+                const now = new Date();
+                const startDate = dateStr ? new Date(dateStr + 'T' + now.getHours().toString().padStart(2, '0') + ':00') : now;
+                const endDate = new Date(startDate.getTime() + 3600000); // +1 hour
+                document.getElementById('startTime').value = formatDateTimeLocal(startDate);
+                document.getElementById('endTime').value = formatDateTimeLocal(endDate);
+                document.getElementById('deleteBtn').style.display = 'none';
+                document.getElementById('duplicateBtn').style.display = 'none';
+            }
+
+            modal.style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('entryModal').style.display = 'none';
+            selectedEvent = null;
+        }
+
+        function handleFormSubmit(e) {
+            e.preventDefault();
+
+            const entryId = document.getElementById('entryId').value;
+            const projectId = parseInt(document.getElementById('projectSelect').value);
+            const customerId = document.getElementById('customerSelect').value ? parseInt(document.getElementById('customerSelect').value) : null;
+            const startTime = new Date(document.getElementById('startTime').value);
+            const endTime = new Date(document.getElementById('endTime').value);
+            const notes = document.getElementById('notes').value;
+            const isBillable = document.getElementById('isBillable').checked;
+            const duration = Math.floor((endTime - startTime) / 1000);
+
+            if (entryId) {
+                // Update existing entry
+                vscode.postMessage({
+                    command: 'updateEntry',
+                    id: parseInt(entryId),
+                    updates: {
+                        projectId,
+                        customerId,
+                        start: startTime.toISOString(),
+                        end: endTime.toISOString(),
+                        duration,
+                        notes,
+                        isBillable
+                    }
+                });
+            } else {
+                // Create new entry
+                vscode.postMessage({
+                    command: 'createEntry',
+                    entry: {
+                        projectId,
+                        customerId,
+                        start: startTime.toISOString(),
+                        end: endTime.toISOString(),
+                        duration,
+                        notes,
+                        isBillable
+                    }
+                });
+            }
+
+            closeModal();
+        }
+
+        function deleteEntry() {
+            const entryId = document.getElementById('entryId').value;
+            if (entryId && confirm('Are you sure you want to delete this time entry?')) {
+                vscode.postMessage({
+                    command: 'deleteEntry',
+                    id: parseInt(entryId)
+                });
+                closeModal();
+            }
+        }
+
+        function duplicateEntry() {
+            const entryId = document.getElementById('entryId').value;
+            if (entryId) {
+                const newDate = prompt('Enter the new date (YYYY-MM-DD):');
+                if (newDate) {
+                    vscode.postMessage({
+                        command: 'duplicateEntry',
+                        id: parseInt(entryId),
+                        newDate: newDate
+                    });
+                    closeModal();
+                }
+            }
+        }
+
+        function formatDateTimeLocal(date) {
+            const d = new Date(date);
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const hours = String(d.getHours()).padStart(2, '0');
+            const minutes = String(d.getMinutes()).padStart(2, '0');
+            return \`\${year}-\${month}-\${day}T\${hours}:\${minutes}\`;
+        }
+
+        // Handle messages from extension
+        window.addEventListener('message', event => {
+            const message = event.data;
+
+            switch (message.command) {
+                case 'updateEvents':
+                    currentEvents = message.events;
+                    calendar.removeAllEvents();
+                    calendar.addEventSource(message.events);
+                    break;
+
+                case 'updateProjects':
+                    projects = message.projects;
+                    const projectSelect = document.getElementById('projectSelect');
+                    projectSelect.innerHTML = '<option value="">Select a project...</option>';
+                    projects.forEach(project => {
+                        const option = document.createElement('option');
+                        option.value = project.id;
+                        option.textContent = project.name;
+                        projectSelect.appendChild(option);
+                    });
+                    break;
+
+                case 'updateCustomers':
+                    customers = message.customers;
+                    const customerSelect = document.getElementById('customerSelect');
+                    customerSelect.innerHTML = '<option value="">None</option>';
+                    customers.forEach(customer => {
+                        const option = document.createElement('option');
+                        option.value = customer.id;
+                        option.textContent = customer.account_name;
+                        customerSelect.appendChild(option);
+                    });
+                    break;
+            }
+        });
+
+        // Request initial data
+        vscode.postMessage({ command: 'getProjects' });
+        vscode.postMessage({ command: 'getCustomers' });
+
+        // Close modal on outside click
+        window.onclick = function(event) {
+            const modal = document.getElementById('entryModal');
+            if (event.target === modal) {
+                closeModal();
+            }
+        };
+    </script>
+</body>
+</html>`;
 }
 
 export function deactivate() {
