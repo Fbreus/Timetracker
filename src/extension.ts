@@ -1680,6 +1680,14 @@ function getTimeEntriesHtml(): string {
                     clientField.value = customerName;
                 }
             });
+
+            // Auto-select the best match if there is one with a score > 0
+            if (scoredProjects.length > 0 && scoredProjects[0].score > 0) {
+                console.log('Auto-selecting best match:', scoredProjects[0].displayText);
+                projectSelect.selectedIndex = 1; // Index 1 because index 0 is "-- Select a project --"
+                // Trigger change event to auto-fill customer
+                projectSelect.dispatchEvent(new Event('change'));
+            }
         }
 
         function renderEntries(entries) {
@@ -1848,6 +1856,11 @@ function getTimeEntriesHtml(): string {
                 return;
             }
 
+            console.log('[DEBUG] Opening Synergy modal for entry:', entry);
+            console.log('[DEBUG] Entry projectName:', entry.projectName);
+            console.log('[DEBUG] Entry customerName:', entry.customerName);
+            console.log('[DEBUG] Entry synergy_project_no:', entry.synergy_project_no);
+
             // Store the entry ID in hidden field
             document.getElementById('selectedEntryId').value = entryId;
 
@@ -1869,8 +1882,13 @@ function getTimeEntriesHtml(): string {
 
             // Auto-fill customer/client field from entry
             const clientField = document.getElementById('synergyClient');
+            console.log('[DEBUG] Client field element:', clientField);
+            console.log('[DEBUG] Attempting to set customer to:', entry.customerName);
             if (clientField && entry.customerName) {
                 clientField.value = entry.customerName;
+                console.log('[DEBUG] Customer field set successfully');
+            } else {
+                console.log('[DEBUG] Skipping customer auto-fill - field or customerName missing');
             }
 
             // Auto-fill form fields
