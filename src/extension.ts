@@ -792,6 +792,8 @@ async function switchToProject(projectId: number): Promise<void> {
 }
 
 async function viewTimeEntries(context: vscode.ExtensionContext): Promise<void> {
+    console.log('[DEBUG] viewTimeEntries called - opening entries panel');
+
     const panel = vscode.window.createWebviewPanel(
         'timetrackerEntries',
         'Time Entries',
@@ -804,9 +806,11 @@ async function viewTimeEntries(context: vscode.ExtensionContext): Promise<void> 
 
     // Store panel reference
     entriesPanel = panel;
+    console.log('[DEBUG] Entries panel reference stored');
 
     // Clear reference when panel is disposed
     panel.onDidDispose(() => {
+        console.log('[DEBUG] Entries panel disposed, clearing reference');
         entriesPanel = undefined;
     });
 
@@ -817,6 +821,7 @@ async function viewTimeEntries(context: vscode.ExtensionContext): Promise<void> 
         async message => {
             switch (message.command) {
                 case 'getData':
+                    console.log('[DEBUG] Entries panel requested data');
                     sendTimeEntriesData(panel);
                     break;
                 case 'editEntry':
@@ -846,10 +851,10 @@ async function viewTimeEntries(context: vscode.ExtensionContext): Promise<void> 
 }
 
 function sendTimeEntriesData(panel: vscode.WebviewPanel): void {
-    // Get last 30 days of entries
+    // Get last 90 days of entries (increased from 30 to cover more calendar navigation)
     const endDate = new Date();
     const startDate = new Date();
-    startDate.setDate(startDate.getDate() - 30);
+    startDate.setDate(startDate.getDate() - 90);
 
     const entries = db.getAllTimeEntries(startDate.toISOString(), endDate.toISOString());
     console.log(`[DEBUG] sendTimeEntriesData: Found ${entries.length} entries from ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
@@ -2966,6 +2971,8 @@ function sendCustomersList(panel: vscode.WebviewPanel): void {
 
 async function createTimeEntry(panel: vscode.WebviewPanel, entry: any): Promise<void> {
     try {
+        console.log('[DEBUG] createTimeEntry called with:', JSON.stringify(entry));
+
         const timeEntry = {
             project_id: entry.projectId,
             customer_id: entry.customerId || undefined,
@@ -2979,7 +2986,16 @@ async function createTimeEntry(panel: vscode.WebviewPanel, entry: any): Promise<
             synergy_synced: false
         };
 
+        console.log('[DEBUG] Creating time entry in database:', JSON.stringify(timeEntry));
         const id = db.createTimeEntry(timeEntry);
+        console.log('[DEBUG] Time entry created with ID:', id);
+
+        // Verify the entry was saved
+        const savedEntry = db.getTimeEntryById(id);
+        console.log('[DEBUG] Verified saved entry:', savedEntry ? 'Found' : 'NOT FOUND');
+        if (savedEntry) {
+            console.log('[DEBUG] Saved entry details:', JSON.stringify(savedEntry));
+        }
 
         panel.webview.postMessage({
             command: 'entryCreated',
