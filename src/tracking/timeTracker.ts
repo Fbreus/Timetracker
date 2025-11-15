@@ -112,6 +112,7 @@ export class TimeTracker {
         }
 
         // Create new time entry
+        console.log('[DEBUG] startTracking: Creating new time entry for project', project.name);
         const entryId = this.db.createTimeEntry({
             project_id: project.id!,
             start_time: new Date().toISOString(),
@@ -120,9 +121,13 @@ export class TimeTracker {
             synergy_synced: false
         });
 
+        console.log('[DEBUG] startTracking: Entry created with ID', entryId);
+
         this.currentEntry = this.db.getTimeEntry(entryId);
         this.currentProject = project;
         this.state = TrackingState.TRACKING;
+
+        console.log('[DEBUG] startTracking: Current entry set:', this.currentEntry);
 
         // Log activity
         this.db.createActivityLog({
@@ -136,6 +141,7 @@ export class TimeTracker {
 
     public async stopTracking(): Promise<void> {
         if (!this.currentEntry || !this.currentProject) {
+            console.log('[DEBUG] stopTracking: No current entry or project');
             return;
         }
 
@@ -143,16 +149,24 @@ export class TimeTracker {
         const startTime = new Date(this.currentEntry.start_time);
         const durationSeconds = Math.floor((endTime.getTime() - startTime.getTime()) / 1000);
 
+        console.log('[DEBUG] stopTracking: Duration =', durationSeconds, 'seconds');
+
         // Check minimum session duration
         const config = vscode.workspace.getConfiguration('timetracker');
         const minDuration = config.get<number>('minSessionDuration', 1) * 60; // Convert to seconds
 
+        console.log('[DEBUG] stopTracking: Minimum duration =', minDuration, 'seconds');
+
         if (durationSeconds >= minDuration) {
+            console.log('[DEBUG] stopTracking: Duration meets minimum, updating entry', this.currentEntry.id);
+
             // Update time entry
             this.db.updateTimeEntry(this.currentEntry.id!, {
                 end_time: endTime.toISOString(),
                 duration: durationSeconds
             });
+
+            console.log('[DEBUG] stopTracking: Entry updated successfully');
 
             // Log activity
             this.db.createActivityLog({
@@ -171,6 +185,7 @@ export class TimeTracker {
             });
         } else {
             // Session too short, delete the entry
+            console.log('[DEBUG] stopTracking: Session too short (', durationSeconds, 's < ', minDuration, 's), deleting entry', this.currentEntry.id);
             this.db.deleteTimeEntry(this.currentEntry.id!);
         }
 
