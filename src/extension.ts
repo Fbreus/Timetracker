@@ -2617,6 +2617,9 @@ function sendCalendarData(panel: vscode.WebviewPanel, startDate: string, endDate
             borderColor = '#1976d2';
         }
 
+        // Synced or submitted entries cannot be edited
+        const isEditable = !entry.synergy_synced && !entry.synergy_submitted;
+
         return {
             id: entry.id,
             title: title,
@@ -2624,6 +2627,9 @@ function sendCalendarData(panel: vscode.WebviewPanel, startDate: string, endDate
             end: entry.end_time,
             backgroundColor: backgroundColor,
             borderColor: borderColor,
+            editable: isEditable,
+            startEditable: isEditable,
+            durationEditable: isEditable,
             extendedProps: {
                 projectId: entry.project_id,
                 projectName: project?.name,
@@ -3039,6 +3045,15 @@ function getCalendarHtml(): string {
             cursor: pointer;
         }
 
+        .fc-event:not(.fc-event-draggable) {
+            cursor: not-allowed;
+            opacity: 0.85;
+        }
+
+        .fc-event:not(.fc-event-draggable):hover {
+            opacity: 1;
+        }
+
         /* Legend styles */
         .legend {
             max-width: 1400px;
@@ -3295,11 +3310,11 @@ function getCalendarHtml(): string {
         <div class="legend-items">
             <div class="legend-item">
                 <div class="legend-color submitted"></div>
-                <span>✓ Submitted to Synergy</span>
+                <span>✓ Submitted to Synergy (Read-Only)</span>
             </div>
             <div class="legend-item">
                 <div class="legend-color synced"></div>
-                <span>⚠ Synced (Not Submitted)</span>
+                <span>⚠ Synced - Not Submitted (Read-Only)</span>
             </div>
             <div class="legend-item">
                 <div class="legend-color billable"></div>
@@ -3309,6 +3324,9 @@ function getCalendarHtml(): string {
                 <div class="legend-color non-billable"></div>
                 <span>Non-Billable</span>
             </div>
+        </div>
+        <div style="margin-top: 10px; font-size: 11px; color: var(--vscode-descriptionForeground);">
+            🔒 Synced and submitted entries cannot be edited, moved, or resized.
         </div>
     </div>
 
@@ -3476,6 +3494,26 @@ function getCalendarHtml(): string {
                 document.getElementById('deleteBtn').style.display = 'inline-block';
                 document.getElementById('duplicateBtn').style.display = 'inline-block';
 
+                // Check if entry is synced (read-only mode)
+                const isSynced = event.extendedProps.synergySynced || event.extendedProps.synergySubmitted;
+
+                // Disable form fields if synced
+                document.getElementById('projectSelect').disabled = isSynced;
+                document.getElementById('customerSelect').disabled = isSynced;
+                document.getElementById('startTime').disabled = isSynced;
+                document.getElementById('endTime').disabled = isSynced;
+                document.getElementById('notes').disabled = isSynced;
+                document.getElementById('isBillable').disabled = isSynced;
+
+                // Hide/disable action buttons if synced
+                if (isSynced) {
+                    document.getElementById('deleteBtn').style.display = 'none';
+                    document.querySelector('button[type="submit"]').style.display = 'none';
+                    document.getElementById('modalTitle').textContent = 'View Time Entry (Read-Only)';
+                } else {
+                    document.querySelector('button[type="submit"]').style.display = 'inline-block';
+                }
+
                 // Show synergy status if entry exists
                 const synergySection = document.getElementById('synergyStatusSection');
                 const submittedStatus = document.getElementById('synergySubmittedStatus');
@@ -3488,7 +3526,7 @@ function getCalendarHtml(): string {
                         const subDate = new Date(event.extendedProps.synergySubmissionDate);
                         submittedStatus.innerHTML += \` on \${subDate.toLocaleDateString()} at \${subDate.toLocaleTimeString()}\`;
                     }
-                    syncedStatus.innerHTML = '';
+                    syncedStatus.innerHTML = '<div style="margin-top: 8px; padding: 8px; background: var(--vscode-inputValidation-infoBackground); border-left: 3px solid var(--vscode-inputValidation-infoBorder); border-radius: 3px;">🔒 This entry cannot be edited because it has been submitted to Synergy.</div>';
                 } else if (event.extendedProps.synergySynced) {
                     synergySection.style.display = 'block';
                     submittedStatus.innerHTML = '';
@@ -3500,6 +3538,7 @@ function getCalendarHtml(): string {
                     if (event.extendedProps.synergyId) {
                         syncedStatus.innerHTML += \`<br>Synergy ID: \${event.extendedProps.synergyId}\`;
                     }
+                    syncedStatus.innerHTML += '<div style="margin-top: 8px; padding: 8px; background: var(--vscode-inputValidation-warningBackground); border-left: 3px solid var(--vscode-inputValidation-warningBorder); border-radius: 3px;">🔒 This entry cannot be edited because it has been synced to Synergy.</div>';
                 } else {
                     synergySection.style.display = 'block';
                     submittedStatus.innerHTML = '';
@@ -3516,6 +3555,15 @@ function getCalendarHtml(): string {
                 document.getElementById('deleteBtn').style.display = 'none';
                 document.getElementById('duplicateBtn').style.display = 'none';
                 document.getElementById('synergyStatusSection').style.display = 'none';
+
+                // Enable all fields for new entry
+                document.getElementById('projectSelect').disabled = false;
+                document.getElementById('customerSelect').disabled = false;
+                document.getElementById('startTime').disabled = false;
+                document.getElementById('endTime').disabled = false;
+                document.getElementById('notes').disabled = false;
+                document.getElementById('isBillable').disabled = false;
+                document.querySelector('button[type="submit"]').style.display = 'inline-block';
             }
 
             modal.style.display = 'block';
