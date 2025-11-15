@@ -22,11 +22,34 @@ export interface TimeEntry {
     is_manual: boolean;
     notes?: string;
     is_billable: boolean;
-    // Basic sync fields
+    task_code?: string; // Optional task/subtask identifier for grouping
+    group_id?: number; // Reference to time_entry_groups
+    // Legacy sync fields (will be deprecated - moved to groups)
     synergy_synced: boolean;
     synergy_sync_date?: string;
     synergy_id?: string;
-    // PSA submission fields
+    synergy_submitted?: boolean;
+    synergy_submission_date?: string;
+    synergy_customer_id?: string;
+    synergy_project_no?: string;
+    synergy_response?: string;
+    created_at?: string;
+    updated_at?: string;
+}
+
+export interface TimeEntryGroup {
+    id?: number;
+    project_id: number;
+    customer_id?: number;
+    entry_date: string; // Date only (YYYY-MM-DD)
+    task_code?: string; // Optional task/subtask identifier
+    total_duration: number; // Sum of all individual entries
+    notes?: string; // Combined or summary notes
+    is_billable: boolean;
+    // Synergy sync fields (moved from individual entries)
+    synergy_synced: boolean;
+    synergy_sync_date?: string;
+    synergy_id?: string;
     synergy_submitted?: boolean;
     synergy_submission_date?: string;
     synergy_customer_id?: string;
@@ -87,15 +110,14 @@ CREATE TABLE IF NOT EXISTS customers (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Time entries table
-CREATE TABLE IF NOT EXISTS time_entries (
+-- Time entry groups table (for Synergy sync)
+CREATE TABLE IF NOT EXISTS time_entry_groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id INTEGER NOT NULL,
     customer_id INTEGER,
-    start_time DATETIME NOT NULL,
-    end_time DATETIME,
-    duration INTEGER,
-    is_manual BOOLEAN DEFAULT 0,
+    entry_date DATE NOT NULL,
+    task_code TEXT,
+    total_duration INTEGER NOT NULL DEFAULT 0,
     notes TEXT,
     is_billable BOOLEAN DEFAULT 0,
     synergy_synced BOOLEAN DEFAULT 0,
@@ -109,7 +131,36 @@ CREATE TABLE IF NOT EXISTS time_entries (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL,
+    UNIQUE(project_id, entry_date, task_code)
+);
+
+-- Time entries table
+CREATE TABLE IF NOT EXISTS time_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    customer_id INTEGER,
+    start_time DATETIME NOT NULL,
+    end_time DATETIME,
+    duration INTEGER,
+    is_manual BOOLEAN DEFAULT 0,
+    notes TEXT,
+    is_billable BOOLEAN DEFAULT 0,
+    task_code TEXT,
+    group_id INTEGER,
+    synergy_synced BOOLEAN DEFAULT 0,
+    synergy_sync_date DATETIME,
+    synergy_id TEXT,
+    synergy_submitted BOOLEAN DEFAULT 0,
+    synergy_submission_date DATETIME,
+    synergy_customer_id TEXT,
+    synergy_project_no TEXT,
+    synergy_response TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL,
+    FOREIGN KEY (group_id) REFERENCES time_entry_groups(id) ON DELETE SET NULL
 );
 
 -- Activity log table
@@ -147,7 +198,13 @@ CREATE INDEX IF NOT EXISTS idx_time_entries_project ON time_entries(project_id);
 CREATE INDEX IF NOT EXISTS idx_time_entries_customer ON time_entries(customer_id);
 CREATE INDEX IF NOT EXISTS idx_time_entries_start_time ON time_entries(start_time);
 CREATE INDEX IF NOT EXISTS idx_time_entries_end_time ON time_entries(end_time);
+CREATE INDEX IF NOT EXISTS idx_time_entries_group_id ON time_entries(group_id);
 CREATE INDEX IF NOT EXISTS idx_time_entries_synergy_synced ON time_entries(synergy_synced);
+CREATE INDEX IF NOT EXISTS idx_time_entry_groups_project ON time_entry_groups(project_id);
+CREATE INDEX IF NOT EXISTS idx_time_entry_groups_customer ON time_entry_groups(customer_id);
+CREATE INDEX IF NOT EXISTS idx_time_entry_groups_date ON time_entry_groups(entry_date);
+CREATE INDEX IF NOT EXISTS idx_time_entry_groups_synced ON time_entry_groups(synergy_synced);
+CREATE INDEX IF NOT EXISTS idx_time_entry_groups_submitted ON time_entry_groups(synergy_submitted);
 CREATE INDEX IF NOT EXISTS idx_customers_account_id ON customers(account_id);
 CREATE INDEX IF NOT EXISTS idx_customers_res_id ON customers(res_id);
 CREATE INDEX IF NOT EXISTS idx_daily_summaries_date ON daily_summaries(date);
@@ -221,9 +278,11 @@ export class TimeTrackerDatabase {
 
             const existingColumns = tableInfo[0].values.map(row => row[1] as string);
 
-            // Define all v2.0 columns that should exist
+            // Define all required columns that should exist
             const requiredColumns = [
                 { name: 'customer_id', type: 'INTEGER' },
+                { name: 'task_code', type: 'TEXT' },
+                { name: 'group_id', type: 'INTEGER' },
                 { name: 'synergy_synced', type: 'BOOLEAN DEFAULT 0' },
                 { name: 'synergy_sync_date', type: 'DATETIME' },
                 { name: 'synergy_id', type: 'TEXT' },
@@ -259,6 +318,46 @@ export class TimeTrackerDatabase {
                         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                 `);
+                migrationsRun++;
+            }
+
+            // Check and create time_entry_groups table if it doesn't exist
+            const groupsTable = this.db.exec("SELECT name FROM sqlite_master WHERE type='table' AND name='time_entry_groups'");
+            if (groupsTable.length === 0 || groupsTable[0].values.length === 0) {
+                console.log('Migration: Creating time_entry_groups table');
+                this.db.run(`
+                    CREATE TABLE time_entry_groups (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        project_id INTEGER NOT NULL,
+                        customer_id INTEGER,
+                        entry_date DATE NOT NULL,
+                        task_code TEXT,
+                        total_duration INTEGER NOT NULL DEFAULT 0,
+                        notes TEXT,
+                        is_billable BOOLEAN DEFAULT 0,
+                        synergy_synced BOOLEAN DEFAULT 0,
+                        synergy_sync_date DATETIME,
+                        synergy_id TEXT,
+                        synergy_submitted BOOLEAN DEFAULT 0,
+                        synergy_submission_date DATETIME,
+                        synergy_customer_id TEXT,
+                        synergy_project_no TEXT,
+                        synergy_response TEXT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                        FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL,
+                        UNIQUE(project_id, entry_date, task_code)
+                    )
+                `);
+
+                // Create indexes for groups table
+                this.db.run('CREATE INDEX IF NOT EXISTS idx_time_entry_groups_project ON time_entry_groups(project_id)');
+                this.db.run('CREATE INDEX IF NOT EXISTS idx_time_entry_groups_customer ON time_entry_groups(customer_id)');
+                this.db.run('CREATE INDEX IF NOT EXISTS idx_time_entry_groups_date ON time_entry_groups(entry_date)');
+                this.db.run('CREATE INDEX IF NOT EXISTS idx_time_entry_groups_synced ON time_entry_groups(synergy_synced)');
+                this.db.run('CREATE INDEX IF NOT EXISTS idx_time_entry_groups_submitted ON time_entry_groups(synergy_submitted)');
+
                 migrationsRun++;
             }
 
