@@ -2895,7 +2895,15 @@ async function moveGroupEntry(panel: vscode.WebviewPanel, entryId: number, daysD
         );
 
         // Refresh the calendar to show the updated grouping
-        refreshCalendarView(panel);
+        // Calculate date range that covers both old and new positions
+        const minDate = oldStart < newStart ? oldStart : newStart;
+        const maxDate = oldStart > newStart ? oldStart : newStart;
+        const startDate = new Date(minDate);
+        startDate.setDate(1);
+        const endDate = new Date(maxDate);
+        endDate.setMonth(endDate.getMonth() + 1);
+        endDate.setDate(0);
+        sendCalendarData(panel, startDate.toISOString(), endDate.toISOString());
 
     } catch (error) {
         vscode.window.showErrorMessage(`Failed to move group entry: ${error}`);
