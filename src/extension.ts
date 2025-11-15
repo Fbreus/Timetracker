@@ -852,6 +852,7 @@ function sendTimeEntriesData(panel: vscode.WebviewPanel): void {
     startDate.setDate(startDate.getDate() - 30);
 
     const entries = db.getAllTimeEntries(startDate.toISOString(), endDate.toISOString());
+    console.log(`[DEBUG] sendTimeEntriesData: Found ${entries.length} entries from ${startDate.toISOString().split('T')[0]} to ${endDate.toISOString().split('T')[0]}`);
     const projects = new Map<number, string>();
 
     // Get project names
@@ -871,12 +872,16 @@ function sendTimeEntriesData(panel: vscode.WebviewPanel): void {
         };
     });
 
+    const mappedEntries = entries.map(e => ({
+        ...e,
+        projectName: projects.get(e.project_id) || 'Unknown'
+    }));
+
+    console.log(`[DEBUG] Sending updateData message with ${mappedEntries.length} entries to entries panel`);
+
     panel.webview.postMessage({
         command: 'updateData',
-        entries: entries.map(e => ({
-            ...e,
-            projectName: projects.get(e.project_id) || 'Unknown'
-        })),
+        entries: mappedEntries,
         synergyProjects: synergyProjects
     });
 }
@@ -1523,7 +1528,9 @@ function getTimeEntriesHtml(): string {
 
         window.addEventListener('message', event => {
             const message = event.data;
+            console.log('[DEBUG] Entries panel received message:', message.command);
             if (message.command === 'updateData') {
+                console.log('[DEBUG] Updating entries list with', message.entries.length, 'entries');
                 allEntries = message.entries;
                 synergyProjects = message.synergyProjects || [];
                 renderEntries(message.entries);
@@ -2973,7 +2980,10 @@ async function createTimeEntry(panel: vscode.WebviewPanel, entry: any): Promise<
 
         // Also refresh entries panel if it's open
         if (entriesPanel) {
+            console.log('[DEBUG] Refreshing entries panel after creating entry');
             sendTimeEntriesData(entriesPanel);
+        } else {
+            console.log('[DEBUG] Entries panel not open, skipping refresh');
         }
 
         vscode.window.showInformationMessage('Time entry created successfully');
