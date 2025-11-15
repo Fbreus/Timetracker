@@ -4764,6 +4764,8 @@ function getCalendarHtml(): string {
                 const option = document.createElement('option');
                 option.value = project.id;
                 option.textContent = project.name;
+                // Store category (customer name for Synergy projects) in data attribute
+                option.dataset.category = project.category || '';
                 templateProject.appendChild(option);
             });
 
@@ -4775,6 +4777,23 @@ function getCalendarHtml(): string {
                 option.value = customer.id;
                 option.textContent = customer.name;
                 templateCustomer.appendChild(option);
+            });
+
+            // Add event listener to auto-fill customer field for Synergy projects
+            templateProject.addEventListener('change', function() {
+                const selectedOption = this.options[this.selectedIndex];
+                const categoryName = selectedOption.dataset.category || '';
+
+                // If category exists and matches a customer, auto-select it
+                if (categoryName && templateCustomer) {
+                    // Try to find matching customer by name
+                    for (let i = 0; i < templateCustomer.options.length; i++) {
+                        if (templateCustomer.options[i].textContent === categoryName) {
+                            templateCustomer.value = templateCustomer.options[i].value;
+                            break;
+                        }
+                    }
+                }
             });
 
             document.getElementById('createTemplateForm').reset();
@@ -4907,6 +4926,8 @@ function getCalendarHtml(): string {
                 const option = document.createElement('option');
                 option.value = project.id;
                 option.textContent = project.name;
+                // Store category (customer name for Synergy projects) in data attribute
+                option.dataset.category = project.category || '';
                 recurringProject.appendChild(option);
             });
 
@@ -4918,6 +4939,23 @@ function getCalendarHtml(): string {
                 option.value = customer.id;
                 option.textContent = customer.account_name;
                 recurringCustomer.appendChild(option);
+            });
+
+            // Add event listener to auto-fill customer field for Synergy projects
+            recurringProject.addEventListener('change', function() {
+                const selectedOption = this.options[this.selectedIndex];
+                const categoryName = selectedOption.dataset.category || '';
+
+                // If category exists and matches a customer, auto-select it
+                if (categoryName && recurringCustomer) {
+                    // Try to find matching customer by name
+                    for (let i = 0; i < recurringCustomer.options.length; i++) {
+                        if (recurringCustomer.options[i].textContent === categoryName) {
+                            recurringCustomer.value = recurringCustomer.options[i].value;
+                            break;
+                        }
+                    }
+                }
             });
 
             // Set default start date to next Monday
@@ -4955,7 +4993,27 @@ function getCalendarHtml(): string {
                         const option = document.createElement('option');
                         option.value = project.id;
                         option.textContent = project.name;
+                        // Store category (customer name for Synergy projects) in data attribute
+                        option.dataset.category = project.category || '';
                         projectSelect.appendChild(option);
+                    });
+
+                    // Add event listener to auto-fill customer field for Synergy projects
+                    projectSelect.addEventListener('change', function() {
+                        const selectedOption = this.options[this.selectedIndex];
+                        const categoryName = selectedOption.dataset.category || '';
+                        const customerSelect = document.getElementById('customerSelect');
+
+                        // If category exists and matches a customer, auto-select it
+                        if (categoryName && customerSelect) {
+                            // Try to find matching customer by name
+                            for (let i = 0; i < customerSelect.options.length; i++) {
+                                if (customerSelect.options[i].textContent === categoryName) {
+                                    customerSelect.value = customerSelect.options[i].value;
+                                    break;
+                                }
+                            }
+                        }
                     });
 
                     // Also populate filter dropdown
