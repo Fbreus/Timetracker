@@ -858,11 +858,19 @@ function sendTimeEntriesData(panel: vscode.WebviewPanel): void {
     cutoffDate.setDate(cutoffDate.getDate() - 30);
     console.log(`[DEBUG] sendTimeEntriesData: Found ${entries.length} entries created since ${cutoffDate.toISOString().split('T')[0]}`);
     const projects = new Map<number, string>();
+    const customers = new Map<number, string>();
 
     // Get project names
     db.getAllProjects().forEach(p => {
         if (p.id) {
             projects.set(p.id, p.name);
+        }
+    });
+
+    // Get customer names
+    db.getAllCustomers().forEach(c => {
+        if (c.id) {
+            customers.set(c.id, c.account_name);
         }
     });
 
@@ -878,7 +886,8 @@ function sendTimeEntriesData(panel: vscode.WebviewPanel): void {
 
     const mappedEntries = entries.map(e => ({
         ...e,
-        projectName: projects.get(e.project_id) || 'Unknown'
+        projectName: projects.get(e.project_id) || 'Unknown',
+        customerName: e.customer_id ? customers.get(e.customer_id) || '' : ''
     }));
 
     console.log(`[DEBUG] Sending updateData message with ${mappedEntries.length} entries to entries panel`);
@@ -1844,6 +1853,25 @@ function getTimeEntriesHtml(): string {
 
             // Populate project dropdown with smart sorting based on entry project name
             populateProjectDropdownSmart(entry.projectName);
+
+            // If entry has a synergy_project_no from previous submission, try to select it directly
+            if (entry.synergy_project_no) {
+                const projectSelect = document.getElementById('synergyProjectCode');
+                for (let i = 0; i < projectSelect.options.length; i++) {
+                    if (projectSelect.options[i].value === entry.synergy_project_no) {
+                        projectSelect.selectedIndex = i;
+                        // Trigger change event to auto-fill customer if needed
+                        projectSelect.dispatchEvent(new Event('change'));
+                        break;
+                    }
+                }
+            }
+
+            // Auto-fill customer/client field from entry
+            const clientField = document.getElementById('synergyClient');
+            if (clientField && entry.customerName) {
+                clientField.value = entry.customerName;
+            }
 
             // Auto-fill form fields
             const startDate = new Date(entry.start_time);
